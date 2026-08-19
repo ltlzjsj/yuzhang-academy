@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.env
+backend/uploads/
+backend/.pycache_check/
+
+# Node
+node_modules/
+dist/
+.vite/
+*.log
+*.tsbuildinfo
+
+# Generated outputs
+output/
+mineru_out/
+models/
+models-backup/
+pdf/
+yzsfxy/
+书院文化图片/
+*.docx
+
+# 前端公开静态模型（3D 数字人 GLB）需随仓库提交，豁免上面的 models/ 规则
+!frontend/public/models/
+!frontend/public/models/**
+
+# 后端 SQLAlchemy 模型目录（backend/app/models）是源码，必须随仓库提交
+!backend/app/models/
+!backend/app/models/*.py
+
+# 不提交 Blender 源文件和旧版本备份
+frontend/public/models/*.blend
+frontend/public/models/*_previous.glb
+
+# Large data dumps / archives (do NOT commit — GitHub rejects >100MB)
+*.zip
+源码.zip
+georag_local.sql
+migration/
+deploy/tencent/*.tar
+deploy/tencent/*.gz
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.claude/
+.vscode/
+
+# scratch/临时文件
+_*.txt
+_*.json
+_*.wav

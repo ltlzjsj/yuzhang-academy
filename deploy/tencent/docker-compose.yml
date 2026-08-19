@@ -1,0 +1,143 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: georag-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-this-root-password}
+      MYSQL_DATABASE: ${DB_NAME:-georag}
+      MYSQL_USER: ${DB_USER:-georag}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-change-this-db-password}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - georag
+
+  redis:
+    image: redis:7-alpine
+    container_name: georag-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    networks:
+      - georag
+
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    image: georag-backend:cloud
+    container_name: georag-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend.env
+    environment:
+      ENV: prod
+      DB_HOST: mysql
+      DB_PORT: 3306
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      RAG_VECTOR_ENABLED: "false"
+      PDF_PARSER: legacy
+      PDF_IMAGE_EXTRACTOR: none
+      MINERU_MODEL_SOURCE: local
+      HF_ENDPOINT: ""
+      HF_HOME: ""
+      WARM_MODELS_ON_START: "false"
+      WARM_RERANKER_ON_START: "false"
+      QA_AUTO_GENERATE_ON_INGEST: "false"
+    volumes:
+      - ${DATA_DIR:-/opt/GeoRag/data}/uploads:/app/uploads
+      - ${DATA_DIR:-/opt/GeoRag/data}/images:/app/academy_images
+      - ${DATA_DIR:-/opt/GeoRag/data}/mineru_out:/app/mineru_out
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()\""]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - georag
+
+  worker:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    image: georag-backend:cloud
+    container_name: georag-worker
+    restart: unless-stopped
+    command: ["worker"]
+    env_file:
+      - ./backend.env
+    environment:
+      ENV: prod
+      DB_HOST: mysql
+      DB_PORT: 3306
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      RAG_VECTOR_ENABLED: "false"
+      PDF_PARSER: legacy
+      PDF_IMAGE_EXTRACTOR: none
+      MINERU_MODEL_SOURCE: local
+      HF_ENDPOINT: ""
+      HF_HOME: ""
+      QA_AUTO_GENERATE_ON_INGEST: "false"
+    volumes:
+      - ${DATA_DIR:-/opt/GeoRag/data}/uploads:/app/uploads
+      - ${DATA_DIR:-/opt/GeoRag/data}/images:/app/academy_images
+      - ${DATA_DIR:-/opt/GeoRag/data}/mineru_out:/app/mineru_out
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - georag
+
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+    image: georag-frontend:cloud
+    container_name: georag-frontend
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ${DATA_DIR:-/opt/GeoRag/data}/images:/usr/share/nginx/html/static/images:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - georag
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  georag:
+    driver: bridge

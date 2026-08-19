@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+uploads/
+mineru_out/
+.pycache_check/
+.pytest_cache/
+*.log

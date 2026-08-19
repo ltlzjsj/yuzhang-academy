@@ -1,0 +1,138 @@
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+  body {
+    @apply bg-brand-bg text-brand-ink font-sans antialiased;
+    font-feature-settings: "ss01", "cv11";
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(107, 106, 99, 0.35) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(107, 106, 99, 0.28);
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(107, 106, 99, 0.46);
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-full bg-claude-accent px-4 py-2 text-sm font-medium text-white transition-colors duration-200 ease-claude hover:bg-claude-accentHover disabled:opacity-50;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-medium text-claude-ink transition-colors duration-200 ease-claude hover:bg-claude-border/60;
+  }
+  .input {
+    @apply w-full rounded-xl border border-claude-border bg-white px-3 py-2 text-sm text-claude-ink placeholder:text-claude-muted focus:border-claude-accent focus:outline-none focus:ring-2 focus:ring-claude-accent/20;
+  }
+  .card {
+    @apply rounded-lg border border-claude-border bg-claude-panel shadow-soft;
+  }
+  .md-body {
+    @apply text-[15px] leading-relaxed;
+  }
+  .md-body > * + * {
+    @apply mt-2;
+  }
+  .md-body h1 { @apply mt-4 mb-2 text-xl font-semibold; }
+  .md-body h2 { @apply mt-4 mb-2 text-lg font-semibold; }
+  .md-body h3 { @apply mt-3 mb-2 text-base font-semibold; }
+  .md-body p  { @apply my-2; }
+  .md-body ul { @apply my-2 list-disc pl-6; }
+  .md-body ol { @apply my-2 list-decimal pl-6; }
+  .md-body li { @apply my-1; }
+  .md-body blockquote {
+    @apply my-2 border-l-2 border-claude-border pl-3 text-claude-muted;
+  }
+  .md-body code {
+    @apply rounded bg-claude-bg px-1 py-0.5 font-mono text-[13px];
+  }
+  .md-body pre {
+    @apply my-3 overflow-x-auto rounded-lg bg-claude-bg p-3 font-mono text-[13px] leading-5;
+  }
+  .md-body pre code {
+    @apply bg-transparent p-0;
+  }
+  .md-body a {
+    @apply text-claude-accent underline underline-offset-2 hover:text-claude-accentHover;
+  }
+  .md-body table {
+    @apply my-3 w-full border-collapse text-sm;
+  }
+  .md-body th, .md-body td {
+    @apply border border-claude-border px-2 py-1;
+  }
+
+  .citation-chip {
+    @apply inline-flex items-center justify-center align-super rounded-full bg-claude-accent/10 px-1.5 text-[10px] font-semibold text-claude-accent ring-1 ring-claude-accent/20 cursor-pointer transition-colors hover:bg-claude-accent/20;
+    min-width: 18px;
+    height: 18px;
+    line-height: 18px;
+    margin: 0 2px;
+  }
+
+  /* ---- 门户通用元件（藏青+金 / yzsfxy 观感） ---- */
+  .shell {
+    @apply mx-auto w-full max-w-shell px-5 sm:px-6;
+  }
+  .eyebrow {
+    @apply text-xs font-extrabold uppercase tracking-[0.18em] text-brand-goldDeep;
+  }
+  .h-serif {
+    font-family: var(--font-serif);
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold transition-all duration-200 ease-brand disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-solid {
+    @apply btn bg-brand-red text-white shadow-soft hover:bg-brand-redDeep hover:-translate-y-0.5;
+  }
+  .btn-gold {
+    @apply btn bg-brand-gold text-brand-navyDeep hover:bg-brand-goldDeep hover:-translate-y-0.5;
+  }
+  .btn-navy {
+    @apply btn bg-brand-navy text-white hover:bg-brand-navyDeep hover:-translate-y-0.5;
+  }
+  .btn-ghost-light {
+    @apply btn border border-white/50 text-white hover:bg-white/10;
+  }
+  .btn-outline {
+    @apply btn border border-brand-line bg-white text-brand-ink hover:border-brand-navy/40 hover:text-brand-navy;
+  }
+  .surface {
+    @apply rounded-card border border-brand-line bg-brand-panel shadow-soft;
+  }
+  .field {
+    @apply w-full rounded-xl border border-brand-line bg-white px-3.5 py-2.5 text-sm text-brand-ink placeholder:text-brand-muted transition focus:border-brand-blue focus:outline-none focus:ring-4 focus:ring-brand-blue/10;
+  }
+}
+
+/* ---- 训练报告打印样式 ---- */
+@media print {
+  body { background: #fff !important; }
+  .no-print { display: none !important; }
+  .print-area { box-shadow: none !important; border: none !important; }
+}
