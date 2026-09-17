@@ -14,7 +14,7 @@ const loading = ref(true)
 const error = ref('')
 
 const active = computed(() => figures.value.find((f) => f.id === activeId.value) ?? null)
-const ASSET_V = 'v=9'
+const ASSET_V = 'v=13'
 
 function thumb(url: string | null, w = 320, h = 400): string | null {
   if (!url || !url.includes('/assets/academy/')) return url

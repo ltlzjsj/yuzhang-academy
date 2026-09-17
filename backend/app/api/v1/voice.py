@@ -6,16 +6,19 @@
 
 这样语音层与对话层解耦：换 persona、加 RAG 都不影响这里。
 """
+import asyncio
+import base64
 import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.core.config import settings
 from app.core.deps import get_current_user
 from app.models.user import User
 from app.schemas.voice import ASRResult, TTSIn, VoiceListOut
 from app.services.mimo_audio import PRESET_VOICES, mimo_audio
+from app.services.phoneme_align import aligner
 
 log = logging.getLogger(__name__)
 
@@ -115,4 +118,36 @@ async def text_to_speech_stream(
             "X-Audio-Sample-Rate": "24000",
             "X-Audio-Channels": "1",
         },
+    )
+
+
+@router.post("/tts/aligned")
+async def text_to_speech_aligned(
+    data: TTSIn,
+    _: User = Depends(get_current_user),
+) -> JSONResponse:
+    """语音合成 + 音素对齐：返回音频(base64)和 viseme 时间轴，供前端按音素驱动口型。"""
+    try:
+        audio_bytes, mime = await mimo_audio.synthesize(
+            data.text,
+            voice=data.voice,
+            voice_style=data.voice_style,
+            voice_desc=data.voice_desc,
+            fmt="wav",
+        )
+        # 对齐是同步 CPU/GPU 计算，放到线程池避免阻塞事件循环
+        visemes = await asyncio.to_thread(aligner.align, audio_bytes, data.text)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        log.warning("TTS+align failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"语音合成或对齐失败：{e}")
+
+    return JSONResponse(
+        {
+            "audio": base64.b64encode(audio_bytes).decode("ascii"),
+            "mime": mime,
+            "duration": round(visemes[-1]["end"], 3) if visemes else 0,
+            "visemes": visemes,
+        }
     )

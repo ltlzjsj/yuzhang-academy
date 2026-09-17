@@ -97,6 +97,22 @@ let jaw = 0
 let nextBlink = 1.6
 let blinkT = -1
 
+// 音素驱动口型：外部按时间轴传入当前音素的口型权重（多 morph），平滑过渡。
+let phonemeTargets: Record<string, number> | null = null
+const phonemeCurrent = new Map<string, number>()
+
+function setPhoneme(weights: Record<string, number> | null) {
+  phonemeTargets = weights
+}
+
+// 假口型兜底：完全无 morph/骨骼的静态低模时，用「整体点头 + 嘴部贴片」模拟说话
+let fakeEnabled = false
+let fakeMouth: THREE.Mesh | null = null
+let fakeMouthBaseScaleX = 0
+let fakeMouthBaseScaleY = 0
+let modelBaseRotX = 0
+let modelBasePosY = 0
+
 function resize() {
   if (!wrap.value || !renderer || !camera) return
   const w = wrap.value.clientWidth || 1
@@ -208,6 +224,64 @@ function setupEmbeddedAnimations(clips: THREE.AnimationClip[]) {
   if (props.speaking) applySpeaking(true)
 }
 
+// 静态低模没有任何口型/骨骼通道时，在嘴部位置贴一个深色椭圆并让整体轻微点头，
+// 随音量张合，视觉上“看起来在说话”。
+function setupFakeMouth() {
+  if (!model) return
+  model.updateMatrixWorld(true)
+  const box = new THREE.Box3().setFromObject(model)
+  const size = new THREE.Vector3()
+  box.getSize(size)
+
+  const cx = (box.min.x + box.max.x) / 2
+  const cz = (box.min.z + box.max.z) / 2
+  const headBottom = box.max.y - size.y * 0.24
+
+  // 判断面部朝向：头部区域离中心 Z 最远的一侧即面部前方
+  let sign = 1
+  let maxDz = 0
+  const tmp = new THREE.Vector3()
+  model.traverse((o) => {
+    const m = o as THREE.Mesh
+    if (!(m as any).isMesh) return
+    const pos = m.geometry.getAttribute('position')
+    if (!pos) return
+    for (let i = 0; i < pos.count; i++) {
+      tmp.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld)
+      if (tmp.y >= headBottom) {
+        const dz = tmp.z - cz
+        const a = Math.abs(dz)
+        if (a > maxDz) {
+          maxDz = a
+          sign = dz >= 0 ? 1 : -1
+        }
+      }
+    }
+  })
+
+  const mouthY = box.max.y - size.y * 0.13
+  const mouthZ = cz + sign * Math.max(maxDz, size.z * 0.2) * 0.8
+  const mw = Math.max(size.x, 0.01)
+
+  const geo = new THREE.SphereGeometry(1, 18, 14)
+  geo.scale(1, 1, 0.55)
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x3a1f14,
+    roughness: 0.92,
+    metalness: 0,
+  })
+  fakeMouth = new THREE.Mesh(geo, mat)
+  fakeMouthBaseScaleX = mw * 0.05
+  fakeMouthBaseScaleY = mw * 0.018
+  fakeMouth.scale.set(fakeMouthBaseScaleX, fakeMouthBaseScaleY, mw * 0.03)
+  fakeMouth.position.set(cx, mouthY, mouthZ)
+  fakeMouth.lookAt(cx, mouthY, mouthZ + sign)
+  modelBaseRotX = model.rotation.x
+  modelBasePosY = model.position.y
+  fakeEnabled = true
+  model.add(fakeMouth)
+}
+
 // 骨架里有这根骨头 ≠ 它能带动顶点。朱熹模型就带着整套 CC_Base_Jaw/Teeth/Tongue
 // 骨骼，但蒙皮权重全为 0，转它不会有任何视觉变化。
 function boneAffectsSkin(bone: THREE.Object3D): boolean {
@@ -268,9 +342,14 @@ function onLoaded(gltf: { scene: THREE.Object3D; animations?: THREE.AnimationCli
   scene.add(model)
   frameFace()
   resize()
-  // 模型自带动画 → 优先用它自己的；没有才回退到内置 RPM 待机/说话动画。
-  if (gltf.animations && gltf.animations.length) setupEmbeddedAnimations(gltf.animations)
-  else setupAnimations()
+  // 无口型/无骨骼的低模：启用假口型；否则走骨骼/内嵌动画。
+  if (!mouthMorph && !jawBone) {
+    setupFakeMouth()
+  } else if (gltf.animations && gltf.animations.length) {
+    setupEmbeddedAnimations(gltf.animations)
+  } else {
+    setupAnimations()
+  }
   loaded.value = true
 }
 
@@ -340,22 +419,49 @@ function tick() {
   // 身体骨骼动画
   mixer?.update(dt)
 
-  // 口型：自动识别的 morph 跟随音量并平滑（叠加在动画之上）；没有 morph 则驱动下巴骨
-  const target = Math.min(1, Math.max(0, props.level)) * 0.84
-  jaw += (target - jaw) * Math.min(1, dt * 18)
-  if (mouthMorph) {
-    setMorph(mouthMorph, jaw)
-    if (mouthOpenSecondary) setMorph('mouthOpen', jaw * 0.46)
-  } else if (jawBone) {
-    jawBone.rotation.x = jawBoneBaseX + jaw * 0.38
-  } else if (headBone && headBaseRot) {
-    // 没有任何嘴部通道：用音量驱动的轻微点头/摆头顶一下，只求「在讲话」而非假口型
-    headT += dt * (1.6 + jaw * 2.4)
-    headBone.rotation.x = headBaseRot.x + Math.sin(headT * 1.7) * 0.035 * jaw + jaw * 0.02
-    headBone.rotation.y = headBaseRot.y + Math.sin(headT * 0.9) * 0.05 * jaw
-    headBone.rotation.z = headBaseRot.z + Math.sin(headT * 1.3) * 0.025 * jaw
+  if (phonemeTargets) {
+    // 音素驱动：把当前音素对应的多个口型 morph 平滑过渡到目标权重
+    const active = new Set(Object.keys(phonemeTargets))
+    for (const [name, targetWeight] of Object.entries(phonemeTargets)) {
+      const cur = phonemeCurrent.get(name) ?? 0
+      const next = cur + (targetWeight - cur) * Math.min(1, dt * 10)
+      phonemeCurrent.set(name, next)
+      setMorph(name, next)
+    }
+    for (const name of [...phonemeCurrent.keys()]) {
+      if (!active.has(name)) {
+        const cur = phonemeCurrent.get(name) ?? 0
+        const next = cur + (0 - cur) * Math.min(1, dt * 10)
+        phonemeCurrent.set(name, next)
+        setMorph(name, next)
+      }
+    }
+  } else {
+    // 音量驱动兜底：自动识别的 morph 跟随音量并平滑；没有 morph 则驱动下巴骨
+    const target = Math.min(1, Math.max(0, props.level)) * 0.84
+    jaw += (target - jaw) * Math.min(1, dt * 18)
+    if (mouthMorph) {
+      setMorph(mouthMorph, jaw)
+      if (mouthOpenSecondary) setMorph('mouthOpen', jaw * 0.46)
+    } else if (jawBone) {
+      jawBone.rotation.x = jawBoneBaseX + jaw * 0.38
+    } else if (headBone && headBaseRot) {
+      headT += dt * (1.6 + jaw * 2.4)
+      headBone.rotation.x = headBaseRot.x + Math.sin(headT * 1.7) * 0.035 * jaw + jaw * 0.02
+      headBone.rotation.y = headBaseRot.y + Math.sin(headT * 0.9) * 0.05 * jaw
+      headBone.rotation.z = headBaseRot.z + Math.sin(headT * 1.3) * 0.025 * jaw
+    }
+    if (browMorph) setMorph(browMorph, jaw * 0.08)
   }
-  if (browMorph) setMorph(browMorph, jaw * 0.08)
+
+  // 假口型兜底：整体点头 + 嘴部贴片随音量张合
+  if (fakeEnabled && fakeMouth) {
+    const t = clock.elapsedTime
+    model!.rotation.x = modelBaseRotX + Math.sin(t * 1.9) * 0.025 * jaw + jaw * 0.018
+    model!.position.y = modelBasePosY + Math.sin(t * 2.3) * 0.004 * jaw
+    fakeMouth.scale.y = fakeMouthBaseScaleY + jaw * fakeMouthBaseScaleY * 4.5
+    fakeMouth.scale.x = fakeMouthBaseScaleX + jaw * fakeMouthBaseScaleX * 0.35
+  }
 
   // 眨眼（驱动所有识别到的眨眼通道）
   if (blinkMorphs.length) {
@@ -388,6 +494,8 @@ onBeforeUnmount(() => {
   renderer?.dispose()
   renderer = null
 })
+
+defineExpose({ setPhoneme })
 </script>
 
 <template>

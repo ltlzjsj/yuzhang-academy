@@ -3,11 +3,15 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { listFigures, type HistoricalFigure } from '@/api/figures'
 import DigitalHuman3D from '@/components/agent/DigitalHuman3D.vue'
+import XmovAvatar from '@/components/agent/XmovAvatar.vue'
+import TalkingPortrait from '@/components/agent/TalkingPortrait.vue'
+import LiveTalkingAvatar from '@/components/agent/LiveTalkingAvatar.vue'
 import { transcribe } from '@/api/voice'
 import { streamSSE } from '@/api/sse'
 import { useAuthStore } from '@/stores/auth'
 import { useVoiceRecorder } from '@/composables/useVoiceRecorder'
 import { useSpeechPlayback } from '@/composables/useSpeechPlayback'
+import { useAlignedSpeech } from '@/composables/useAlignedSpeech'
 import { renderMarkdown } from '@/utils/markdown'
 
 type HiddenMessage = { role: 'user' | 'assistant'; content: string }
@@ -24,8 +28,10 @@ const latestAnswer = ref('')
 const latestSources = ref(0)
 const error = ref('')
 const streaming = ref(false)
+const portraitPreparing = ref(false)
+const pendingPortraitAnswer = ref('')
 const hiddenHistory = ref<HiddenMessage[]>([])
-const ASSET_V = 'v=9'
+const ASSET_V = 'v=11'
 let abort: AbortController | null = null
 
 // --- 语音对话 ---
@@ -35,9 +41,41 @@ const recorder = useVoiceRecorder()
 const speech = useSpeechPlayback(() => ({
   voice: fig.value?.voice_id || '白桦',
   voiceStyle: fig.value?.voice_style || undefined,
+  voiceDesc: fig.value?.voice_desc || undefined,
 }))
 const transcribing = ref(false)
 const autoRead = ref(true) // 收到回答后自动朗读（先生开口说话）
+const xmovRef = ref<{ speak: (text: string) => void; idle: () => void } | null>(null)
+const digitalHumanRef = ref<{ setPhoneme: (weights: Record<string, number> | null) => void } | null>(null)
+const talkingPortraitRef = ref<{ speak: (text: string) => void; stop: () => void } | null>(null)
+const liveTalkingRef = ref<{ speak: (text: string) => Promise<number> } | null>(null)
+// 影院字幕容器：文字增长时自动滚到最后一行
+const cineLineRef = ref<HTMLElement | null>(null)
+// 朱熹暂时改用“画像开口说话 + 点头呼吸”，与吕祖谦保持一致。
+const useXmov = computed(() => false)
+// LiveTalking 实时数字人（WebRTC 口型驱动）：江万里、罗从彦。
+// 每人一套「待机动作 + 讲话动作」，待机视频通过 custom_config 在连接时指定。
+// zoom：画面等比放大倍数，按人物原片取景单独微调。
+// 罗从彦 2026-09 版素材换成全身取景（人脸比旧版小约 28%），放大 1.18 倍
+// 让页面上的观感与旧版接近，同时保留抬手讲学的手势动作。
+const LIVE_TALKING_AVATARS: Record<string, { avatar: string; idle?: string; zoom?: number }> = {
+  jiangwanli: { avatar: 'jiangwanli_lt' },
+  luocongyan: {
+    avatar: 'luocongyan_lt',
+    idle: JSON.stringify([{ audiotype: 1, imgpath: './data/custom/luocongyan_idle' }]),
+    zoom: 1.18,
+  },
+}
+const liveTalkingAvatar = computed(() => LIVE_TALKING_AVATARS[fig.value?.id ?? ''] ?? null)
+const useLiveTalking = computed(() => !!liveTalkingAvatar.value)
+// 画像开口说话：朱熹、吕祖谦（用立绘生成说话视频）。
+const useTalkingPortrait = computed(() => ['zhuxi', 'lvzuqian'].includes(fig.value?.id ?? ''))
+const isSpeaking = computed(() => (useXmov.value ? speech.speaking.value : aligned.speaking.value))
+
+// 自研数字人的音素驱动语音：播放时把口型权重喂给 DigitalHuman3D
+const aligned = useAlignedSpeech((weights) => {
+  digitalHumanRef.value?.setPhoneme(weights)
+})
 
 async function toggleMic() {
   if (!auth.token) {
@@ -61,16 +99,128 @@ async function toggleMic() {
     }
   } else {
     speech.stop()
+    aligned.stop()
+    xmovRef.value?.idle()
     await recorder.start()
   }
 }
 
 function speakAnswer() {
-  if (latestAnswer.value.trim()) speech.speak(latestAnswer.value)
+  if (!latestAnswer.value.trim()) return
+  if (useXmov.value) xmovRef.value?.speak(latestAnswer.value)
+  else if (useLiveTalking.value) liveTalkingRef.value?.speak(latestAnswer.value)
+  else if (useTalkingPortrait.value) talkingPortraitRef.value?.speak(latestAnswer.value)
+  else aligned.speak(latestAnswer.value, { voiceDesc: fig.value?.voice_desc || undefined })
+}
+
+function onPortraitReady() {
+  if (pendingPortraitAnswer.value) {
+    latestAnswer.value = pendingPortraitAnswer.value
+  }
+  portraitPreparing.value = false
+}
+
+let revealRaf = 0
+// 字幕是否正在逐字增长（用于显示光标）
+const revealing = ref(false)
+// 讲完之后收起字幕的定时器
+let subtitleClearTimer: number | undefined
+
+function cancelSubtitleClear() {
+  if (subtitleClearTimer !== undefined) {
+    clearTimeout(subtitleClearTimer)
+    subtitleClearTimer = undefined
+  }
+}
+
+/** 数字人讲完再收字幕：还在逐字显示时不收，讲完停顿 1 秒后收起。 */
+function maybeScheduleSubtitleClear() {
+  if (revealing.value || !latestAnswer.value) return
+  cancelSubtitleClear()
+  subtitleClearTimer = window.setTimeout(() => {
+    subtitleClearTimer = undefined
+    if (revealing.value) return
+    latestAnswer.value = ''
+  }, 1000)
+}
+
+/** LiveTalking 播报状态：开始说话先取消收字幕，讲完安排收起。 */
+function onPortraitSpeaking(active: boolean) {
+  if (active) {
+    cancelSubtitleClear()
+    return
+  }
+  maybeScheduleSubtitleClear()
+}
+
+function stopReveal() {
+  if (revealRaf) {
+    cancelAnimationFrame(revealRaf)
+    revealRaf = 0
+  }
+  revealing.value = false
+}
+
+/**
+ * 跟着数字人说话的速度逐字显示回答：按这段语音的时长匀速推进，
+ * 说到哪个字就出现哪个字，避免文字一次性全部砸出来。
+ */
+function revealBySpeech(text: string, durationSec: number) {
+  stopReveal()
+  const chars = Array.from(text)
+  if (!chars.length) {
+    latestAnswer.value = ''
+    portraitPreparing.value = false
+    return
+  }
+  const leadMs = 600 // 数字人起播缓冲，这段时间仍显示“先生正在思量”
+  const speechMs = durationSec > 0 ? durationSec * 1000 : chars.length * 190
+  const start = performance.now()
+  latestAnswer.value = ''
+  revealing.value = true
+  const tick = () => {
+    const elapsed = performance.now() - start
+    if (elapsed < leadMs) {
+      revealRaf = requestAnimationFrame(tick)
+      return
+    }
+    portraitPreparing.value = false
+    const ratio = Math.min(1, (elapsed - leadMs) / Math.max(1, speechMs))
+    const shown = Math.max(1, Math.round(chars.length * ratio))
+    latestAnswer.value = chars.slice(0, shown).join('')
+    revealRaf = ratio < 1 ? requestAnimationFrame(tick) : 0
+    if (ratio >= 1) {
+      revealing.value = false
+      // 兜底：若播报状态已结束，这里也会把字幕收掉
+      maybeScheduleSubtitleClear()
+    }
+  }
+  revealRaf = requestAnimationFrame(tick)
+}
+
+function onPortraitEnded() {
+  portraitPreparing.value = false
+}
+
+// 回答较长时字幕会超出一屏，跟着逐字显示自动滚到底
+watch(
+  latestAnswer,
+  () => {
+    const el = cineLineRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  },
+  { flush: 'post' },
+)
+
+function onPortraitError(message: string) {
+  error.value = message
+  portraitPreparing.value = false
 }
 
 const fig = computed(() => figures.value.find((f) => f.id === route.params.id) ?? null)
-const hasReply = computed(() => !!latestAnswer.value || streaming.value || !!error.value)
+// v2 界面（书院讲堂风 · 数字人为主）：江万里、罗从彦，其他人物保持原样。
+const isJiangwanli = computed(() => !!liveTalkingAvatar.value)
+const hasReply = computed(() => !!latestAnswer.value || streaming.value || portraitPreparing.value || !!error.value)
 
 function withAssetVersion(url: string | null): string | null {
   if (!url || !url.includes('/assets/academy/')) return url
@@ -92,6 +242,8 @@ function trimHistory() {
 }
 
 function stop() {
+  stopReveal()
+  cancelSubtitleClear()
   if (abort) {
     abort.abort()
     abort = null
@@ -102,10 +254,15 @@ function stop() {
 function resetContext() {
   stop()
   speech.stop()
+  aligned.stop()
+  xmovRef.value?.idle()
+  talkingPortraitRef.value?.stop()
   recorder.cancel()
   hiddenHistory.value = []
   latestQuestion.value = ''
   latestAnswer.value = ''
+  pendingPortraitAnswer.value = ''
+  portraitPreparing.value = false
   latestSources.value = 0
   error.value = ''
 }
@@ -136,6 +293,8 @@ function submit() {
   draft.value = ''
   latestQuestion.value = content
   latestAnswer.value = ''
+  pendingPortraitAnswer.value = ''
+  portraitPreparing.value = false
   latestSources.value = 0
   streaming.value = true
 
@@ -151,7 +310,15 @@ function submit() {
         messages: outgoing,
         system_prompt: `${fig.value.system_prompt}
 
-界面说明：你正在以历史人物身份面对来访者当场答问。前文对话会作为记忆传入，但页面只展示你对当前问题的回答。请自然承接上下文，不要复述全部历史，不要说自己是 AI。`,
+界面说明：你正在以历史人物身份面对来访者当场答问。前文对话会作为记忆传入，但页面只展示你对当前问题的回答。请自然承接上下文，不要复述全部历史，不要说自己是 AI。
+【本次答问的说话方式 · 必须遵守】
+1. 短：全文 40~70 字，最多 80 字，2~3 句说完，宁可少说不可多说。
+2. 先接后答：第一句用十来字接住对方的话，可调侃、可自嘲、可感叹，如“你这一问倒是有趣”“嚯，问到要害了”“好，老夫捡要紧的说”。
+3. 之后一到两句只讲最要紧的一点，一句一个意思；不铺背景、不堆典故。
+4. 不复述对方的问题，不用“首先/其次/综上所述”这类套话，不分点、不成篇。
+5. 语言用宋明语录体的白话，半文半白、接近口语，像《朱子语类》《传习录》那样随口讲学；不生僻、不堆砌之乎者也。
+6. 讲完可用半句把话头递回去，如“还想问什么，尽管说”。
+7. 绝不写动作、神态、语气提示，不出现括号（如：（笑）（顿了顿）之类）；只写你要说出口的话，不要暴露你是 AI。`,
         kb_ids: [],
         rag_enabled: false,
       },
@@ -162,16 +329,39 @@ function submit() {
           latestSources.value = (data.items ?? []).length
         } else if (event === 'delta') {
           const text = data.content ?? ''
-          latestAnswer.value += text
+          // 数字人（画像开口 / LiveTalking 实时口型）都先攒着不显示，
+          // 等口型准备好再一起显示回答。
+          if (useTalkingPortrait.value || useLiveTalking.value) pendingPortraitAnswer.value += text
+          else latestAnswer.value += text
           finalAnswer += text
-          if (VOICE_ENABLED && autoRead.value) speech.feed(text) // 边生成边按句合成播放
+          // 音素驱动需要完整文本做对齐，这里不再流式 feed，done 时统一播报
         } else if (event === 'error') {
           error.value = data.message || '先生暂时无言，请稍后再问。'
         } else if (event === 'done') {
           streaming.value = false
           abort = null
-          if (VOICE_ENABLED && autoRead.value) speech.finish()
           if (finalAnswer.trim()) {
+            if (useTalkingPortrait.value || useLiveTalking.value) {
+              pendingPortraitAnswer.value = finalAnswer.trim()
+              if (VOICE_ENABLED && autoRead.value) {
+                portraitPreparing.value = true
+                if (useLiveTalking.value) {
+                  // 等 TTS 合成并交给 LiveTalking，再跟着说话速度逐字显示回答
+                  Promise.resolve(liveTalkingRef.value?.speak(finalAnswer))
+                    .then((duration) =>
+                      revealBySpeech(pendingPortraitAnswer.value || finalAnswer, Number(duration) || 0),
+                    )
+                    .catch(() => onPortraitReady())
+                } else {
+                  talkingPortraitRef.value?.speak(finalAnswer)
+                }
+              } else {
+                latestAnswer.value = finalAnswer.trim()
+              }
+            } else if (VOICE_ENABLED && autoRead.value) {
+              if (useXmov.value) xmovRef.value?.speak(finalAnswer)
+              else aligned.speak(finalAnswer, { voiceDesc: fig.value?.voice_desc || undefined })
+            }
             hiddenHistory.value = [...outgoing, { role: 'assistant', content: finalAnswer.trim() }]
             trimHistory()
           }
@@ -214,10 +404,79 @@ onBeforeUnmount(stop)
 </script>
 
 <template>
-  <div v-if="fig" class="fc" :style="{ '--ac': fig.accent }">
+  <div v-if="fig" class="fc" :class="{ 'fc--v2': isJiangwanli }" :style="{ '--ac': fig.accent }">
     <RouterLink to="/figures" class="fc__back">← 历代名人</RouterLink>
     <button class="fc__reset" :disabled="!hiddenHistory.length && !hasReply" @click="resetContext">重新请教</button>
 
+    <!-- 江万里 / 罗从彦：以数字人为主的电影字幕式布局 -->
+    <section v-if="isJiangwanli" class="fc__cinema">
+      <aside class="fc__cineInfo">
+        <p class="fc__dyn">{{ fig.dynasty }} · {{ fig.academy }}</p>
+        <h1 class="h-serif">{{ fig.name }}</h1>
+        <p class="fc__title">{{ fig.title }}</p>
+        <blockquote v-if="fig.quote" class="fc__quote h-serif">“{{ fig.quote }}”</blockquote>
+        <p class="fc__bio">{{ fig.bio }}</p>
+
+        <!-- 固定问题挪到左侧人物卡下方 -->
+        <div v-if="fig.suggestions?.length" class="fc__cineAsk">
+          <p class="fc__cineAskLbl">可以这样问</p>
+          <button v-for="q in fig.suggestions" :key="q" :disabled="streaming" @click="pick(q)">
+            {{ q }}
+          </button>
+        </div>
+      </aside>
+
+      <div class="fc__cineMain">
+        <div class="fc__cineStage">
+          <LiveTalkingAvatar
+            ref="liveTalkingRef"
+            :avatar-id="liveTalkingAvatar!.avatar"
+            :custom-config="liveTalkingAvatar!.idle"
+            :zoom="liveTalkingAvatar!.zoom ?? 1"
+            :voice-id="fig.voice_id"
+            :voice-style="fig.voice_style"
+            :voice-desc="fig.voice_desc"
+            @speaking="onPortraitSpeaking"
+            @error="onPortraitError"
+          />
+        </div>
+
+        <div class="fc__cineSubtitle">
+          <p
+            v-if="latestAnswer"
+            ref="cineLineRef"
+            class="fc__cineLine"
+            :class="{ 'is-typing': revealing }"
+          >
+            {{ latestAnswer }}
+          </p>
+          <p v-else-if="streaming || portraitPreparing" class="fc__cineLine fc__cineLine--wait">
+            先生正在思量…
+          </p>
+          <p v-else-if="error" class="fc__cineLine fc__cineLine--err">{{ error }}</p>
+          <p v-else class="fc__cineLine fc__cineLine--idle">点左侧问题，或按住喇叭向先生请教</p>
+        </div>
+
+        <div class="fc__cineActions">
+          <button
+            v-if="VOICE_ENABLED"
+            class="fc__micRound"
+            :class="{ 'is-rec': recorder.recording.value }"
+            :disabled="transcribing || streaming"
+            :title="recorder.recording.value ? '点击结束并识别' : '按住说话'"
+            @click="toggleMic"
+          >
+            <span v-if="transcribing" class="fc__micText">识别中…</span>
+            <span v-else-if="recorder.recording.value" class="fc__micText">● 录音中</span>
+            <span v-else class="fc__micIcon">🎤</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="fc__cineSpacer" aria-hidden="true" />
+    </section>
+
+    <template v-else>
     <section class="fc__stage">
       <div class="fc__left">
         <div
@@ -226,11 +485,35 @@ onBeforeUnmount(stop)
           :style="{ '--talk': speech.level.value }"
         >
           <span class="fc__glow" />
+          <LiveTalkingAvatar
+            v-if="useLiveTalking"
+            ref="liveTalkingRef"
+            :avatar-id="liveTalkingAvatar?.avatar || 'jiangwanli_lt'"
+            :voice-id="fig.voice_id"
+            :voice-style="fig.voice_style"
+            :voice-desc="fig.voice_desc"
+            @error="onPortraitError"
+          />
+          <TalkingPortrait
+            v-else-if="useTalkingPortrait"
+            ref="talkingPortraitRef"
+            :figure-id="fig.id"
+            :image-url="portrait(fig.image_url)"
+            :voice-id="fig.voice_id"
+            :voice-style="fig.voice_style"
+            :voice-desc="fig.voice_desc"
+            @ready="onPortraitReady"
+            @ended="onPortraitEnded"
+            @error="onPortraitError"
+          />
+          <XmovAvatar v-else-if="useXmov" ref="xmovRef" />
           <DigitalHuman3D
+            v-else
+            ref="digitalHumanRef"
             :key="fig.id"
-            :src="`/models/${fig.id}.glb`"
+            :src="fig.id === 'wangyangming' ? '/models/zhuxi_ue5.glb' : `/models/${fig.id}.glb`"
             :level="speech.level.value"
-            :speaking="speech.speaking.value"
+            :speaking="isSpeaking"
           />
         </div>
 
@@ -246,6 +529,10 @@ onBeforeUnmount(stop)
         <template v-if="hasReply">
           <p v-if="latestQuestion" class="fc__asked">你问：{{ latestQuestion }}</p>
           <div v-if="latestAnswer" class="fc__answer md-body" v-html="renderMarkdown(latestAnswer)" />
+          <div v-else-if="portraitPreparing" class="fc__thinking">
+            <i /><i /><i />
+            <span>{{ useLiveTalking ? '先生正在思量…' : '先生正在准备讲学，请稍候…' }}</span>
+          </div>
           <div v-else-if="streaming" class="fc__thinking">
             <i /><i /><i />
             <span>先生正在思量...</span>
@@ -257,6 +544,7 @@ onBeforeUnmount(stop)
           <p class="fc__emptyTitle h-serif">请先生开示</p>
           <p class="fc__emptyText">可从下方择一题发问，也可自行向先生请教。</p>
         </template>
+        <span v-if="isJiangwanli && hasReply" class="fc__wm" aria-hidden="true">豫章书院</span>
       </div>
     </section>
 
@@ -293,17 +581,18 @@ onBeforeUnmount(stop)
           <span>语音作答</span>
         </label>
         <button
-          v-if="latestAnswer && !speech.speaking.value"
+          v-if="latestAnswer && !aligned.speaking.value"
           class="fc__readbtn"
-          :disabled="speech.loading.value"
+          :disabled="aligned.loading.value"
           @click="speakAnswer"
-        >{{ speech.loading.value ? '合成中…' : '🔊 朗读回答' }}</button>
-        <button v-else-if="speech.speaking.value" class="fc__readbtn" @click="speech.stop()">⏹ 停止朗读</button>
-        <span v-if="recorder.error.value || speech.error.value" class="fc__verr">
-          {{ recorder.error.value || speech.error.value }}
+        >{{ aligned.loading.value ? '合成中…' : '🔊 朗读回答' }}</button>
+        <button v-else-if="aligned.speaking.value" class="fc__readbtn" @click="aligned.stop()">⏹ 停止朗读</button>
+        <span v-if="recorder.error.value || speech.error.value || aligned.error.value" class="fc__verr">
+          {{ recorder.error.value || speech.error.value || aligned.error.value }}
         </span>
       </div>
     </footer>
+    </template>
   </div>
 
   <div v-else-if="loading" class="fc__loading">正在恭请先生...</div>
@@ -713,5 +1002,579 @@ onBeforeUnmount(stop)
   .fc__dock { width: calc(100% - 24px); }
   .fc__chips { justify-content: flex-start; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
   .fc__chips button { white-space: nowrap; }
+}
+
+/* ============================================================
+   江万里 · 书院讲堂界面（v2）
+   仅在 .fc--v2 下生效，其他人物的界面保持原样。
+   布局参考：左侧数字人舞台大卡 + 右侧信息卡/对话卡 + 底部操作卡，
+   配色沿用系统令牌（藏青 + 描金 + 宣纸米白）。
+   ============================================================ */
+.fc--v2 {
+  color: #ece5d8;
+  background:
+    radial-gradient(120% 78% at 12% -12%, rgba(198, 154, 75, 0.18), transparent 58%),
+    radial-gradient(92% 70% at 100% 112%, rgba(40, 86, 78, 0.26), transparent 64%),
+    linear-gradient(165deg, #17212b 0%, #111a22 52%, #0b1117 100%);
+}
+.fc--v2::before {
+  background:
+    radial-gradient(58% 40% at 16% 20%, rgba(198, 154, 75, 0.10), transparent 62%),
+    radial-gradient(46% 34% at 84% 28%, rgba(56, 112, 98, 0.15), transparent 66%),
+    radial-gradient(54% 40% at 62% 90%, rgba(126, 92, 48, 0.12), transparent 68%);
+  mask-image: linear-gradient(to bottom, transparent, black 14%, black 80%, transparent);
+}
+
+/* 顶部返回 / 重新请教 */
+.fc--v2 .fc__back,
+.fc--v2 .fc__reset {
+  border: 1px solid rgba(214, 178, 111, 0.30);
+  background: rgba(255, 250, 240, 0.07);
+  color: #ece5d8;
+  box-shadow: none;
+  backdrop-filter: blur(8px);
+}
+.fc--v2 .fc__back:hover,
+.fc--v2 .fc__reset:not(:disabled):hover {
+  background: rgba(214, 178, 111, 0.18);
+  border-color: rgba(214, 178, 111, 0.52);
+}
+/* 顶部按钮对齐到内容网格，而不是贴浏览器边角 */
+.fc--v2 .fc__back {
+  left: max(20px, calc((100% - 1240px) / 2 + clamp(20px, 4vw, 56px)));
+}
+.fc--v2 .fc__reset {
+  right: max(20px, calc((100% - 1240px) / 2 + clamp(20px, 4vw, 56px)));
+}
+
+/* 两栏：左舞台 / 右信息 + 对话 */
+.fc--v2 .fc__stage {
+  width: 100%;
+  max-width: 1240px;
+  min-width: 0;
+  margin-left: auto;
+  margin-right: auto;
+  /* 左列上限给足，让竖版卡片能按自身比例撑开，不会被压窄后裁掉人物两侧 */
+  grid-template-columns: minmax(280px, 600px) minmax(320px, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  align-items: stretch;
+  gap: clamp(14px, 1.6vw, 24px);
+  padding: clamp(54px, 7vh, 70px) clamp(20px, 4vw, 56px) clamp(8px, 1.6vh, 16px);
+}
+/* 让“人物 / 信息”直接参与父级栅格 */
+.fc--v2 .fc__left { display: contents; }
+
+/* 数字人舞台卡 */
+.fc--v2 .fc__figure,
+.fc--v2 .fc__figure--3d {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  min-height: 0;
+  /* 与数字人竖版画面同比例，避免出现内外两层大小不一的框 */
+  aspect-ratio: 480 / 854;
+  justify-self: start;
+  padding: 0;
+  border-radius: 26px;
+  overflow: hidden;
+  border: 1px solid rgba(214, 178, 111, 0.24);
+  background:
+    radial-gradient(78% 52% at 50% 16%, rgba(198, 154, 75, 0.20), transparent 64%),
+    linear-gradient(180deg, #1d2833 0%, #141d26 58%, #0c1319 100%);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+/* 舞台四周压暗，人物画面更聚焦 */
+.fc--v2 .fc__figure::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  /* 轻微压暗 + 四周加暗，让绿幕画面与墨色主题更融合 */
+  background:
+    linear-gradient(180deg, rgba(12, 18, 24, 0.10), rgba(12, 18, 24, 0.24)),
+    radial-gradient(124% 92% at 50% 44%, transparent 54%, rgba(8, 12, 16, 0.48) 100%);
+}
+.fc--v2 .fc__glow {
+  z-index: 0;
+  bottom: auto;
+  top: 46%;
+  width: min(64%, 320px);
+  background: radial-gradient(circle, rgba(237, 183, 79, 0.22), rgba(255, 255, 255, 0.06) 46%, transparent 72%);
+  filter: blur(16px);
+}
+.fc--v2 .fc__figure > *:not(.fc__glow) { z-index: 1; }
+.fc--v2 .fc__figure img {
+  max-height: 100%;
+  max-width: 100%;
+  transform: translateY(calc(var(--talk, 0) * -6px)) scale(1.02);
+  filter: drop-shadow(0 20px 28px rgba(0, 0, 0, 0.42));
+}
+.fc--v2 .fc__figure video,
+.fc--v2 .fc__figure canvas { max-height: 100%; max-width: 100%; }
+
+/* 人物信息卡 */
+.fc--v2 .fc__meta {
+  grid-column: 2;
+  grid-row: 1;
+  width: 100%;
+  text-align: left;
+  padding: 20px 22px 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(214, 178, 111, 0.20);
+  background: rgba(255, 250, 240, 0.055);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
+  text-shadow: none;
+}
+.fc--v2 .fc__dyn {
+  display: inline-block;
+  margin-bottom: 10px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(214, 178, 111, 0.30);
+  background: rgba(214, 178, 111, 0.16);
+  color: #e8cd93;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+.fc--v2 .fc__meta h1 {
+  margin: 2px 0 4px;
+  color: #f4ecdc;
+  font-size: clamp(26px, 2.6vw, 36px);
+}
+.fc--v2 .fc__title { color: rgba(236, 229, 216, 0.76); font-size: 14px; }
+.fc--v2 .fc__quote {
+  margin-top: 12px;
+  padding-left: 12px;
+  border-left: 3px solid #c69a4b;
+  color: #dcc292;
+  font-size: 14.5px;
+  text-align: left;
+}
+
+/* 对话卡 */
+.fc--v2 .fc__bubble {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  justify-self: stretch;
+  width: 100%;
+  max-height: none;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 22px;
+  border-radius: 20px;
+  border: 1px solid rgba(214, 178, 111, 0.20);
+  background: rgba(255, 250, 240, 0.055);
+  backdrop-filter: blur(10px);
+  color: #ece5d8;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
+}
+.fc--v2 .fc__bubble::before,
+.fc--v2 .fc__bubble::after { display: none; }
+.fc--v2 .fc__bubble.is-empty { width: 100%; }
+.fc--v2 .fc__asked {
+  color: rgba(236, 229, 216, 0.74);
+  border-bottom-color: rgba(236, 229, 216, 0.12);
+}
+.fc--v2 .fc__emptyTitle { color: #eed9a8; }
+.fc--v2 .fc__emptyText { color: rgba(236, 229, 216, 0.74); }
+.fc--v2 .fc__sources { padding-top: 12px; color: rgba(236, 229, 216, 0.66); }
+/* 对话卡底部的书院水印，填补内容较少时的留白 */
+.fc--v2 .fc__wm {
+  margin-top: auto;
+  padding-top: 18px;
+  text-align: center;
+  font-family: var(--font-serif);
+  font-size: clamp(18px, 1.8vw, 26px);
+  letter-spacing: 0.36em;
+  text-indent: 0.36em;
+  color: rgba(214, 178, 111, 0.13);
+  user-select: none;
+  pointer-events: none;
+}
+/* 深色底下的正文排版微调（v-html 内容需要用 :deep 穿透） */
+.fc--v2 .fc__bubble :deep(.md-body blockquote) {
+  color: rgba(236, 229, 216, 0.62);
+  border-left-color: rgba(214, 178, 111, 0.45);
+}
+.fc--v2 .fc__bubble :deep(.md-body code) {
+  background: rgba(255, 255, 255, 0.09);
+  color: #ecdcb8;
+}
+.fc--v2 .fc__bubble :deep(.md-body pre) { background: rgba(0, 0, 0, 0.36); }
+.fc--v2 .fc__bubble :deep(.md-body a) { color: #d9b46b; }
+.fc--v2 .fc__bubble :deep(.md-body th),
+.fc--v2 .fc__bubble :deep(.md-body td) { border-color: rgba(236, 229, 216, 0.16); }
+
+/* 底部操作区 */
+.fc--v2 .fc__dock {
+  width: 100%;
+  max-width: 1240px;
+  min-width: 0;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 10px clamp(20px, 4vw, 56px) 18px;
+  box-sizing: border-box;
+}
+.fc--v2 .fc__chips { min-width: 0; }
+.fc--v2 .fc__chips button {
+  border: 1px solid rgba(214, 178, 111, 0.30);
+  background: rgba(255, 250, 240, 0.06);
+  color: #dcc79a;
+  box-shadow: none;
+}
+.fc--v2 .fc__chips button:hover:not(:disabled) {
+  background: rgba(214, 178, 111, 0.18);
+  transform: translateY(-1px);
+}
+.fc--v2 .fc__composer {
+  min-width: 0;
+  border: 1px solid rgba(214, 178, 111, 0.22);
+  border-radius: 20px;
+  background: rgba(255, 250, 240, 0.055);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(10px);
+  padding: 12px;
+}
+.fc--v2 .fc__input {
+  min-width: 0;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.30);
+  color: #ece5d8;
+}
+.fc--v2 .fc__input::placeholder { color: rgba(236, 229, 216, 0.52); }
+.fc--v2 .fc__input:focus { outline: 2px solid rgba(198, 154, 75, 0.45); }
+.fc--v2 .fc__send {
+  border-radius: 14px;
+  background: linear-gradient(135deg, #d9ae5d, #b8863a);
+  color: #1d1608;
+  box-shadow: 0 12px 24px rgba(184, 134, 58, 0.28);
+}
+.fc--v2 .fc__send--stop { background: var(--red); box-shadow: none; }
+.fc--v2 .fc__mic {
+  border-radius: 14px;
+  border: 1px solid rgba(214, 178, 111, 0.24);
+  background: rgba(0, 0, 0, 0.26);
+  color: #dcc79a;
+}
+.fc--v2 .fc__voicebar { color: rgba(236, 229, 216, 0.76); padding: 0 12px; }
+.fc--v2 .fc__toggle input { accent-color: #c69a4b; width: 15px; height: 15px; }
+.fc--v2 .fc__readbtn {
+  border: 1px solid rgba(214, 178, 111, 0.30);
+  background: rgba(255, 250, 240, 0.06);
+  color: #dcc79a;
+}
+.fc--v2 .fc__error { color: #f0a9a0; }
+.fc--v2 .fc__verr { color: #e8b584; }
+
+/* 窄屏回退单栏 */
+@media (max-width: 980px) {
+  .fc--v2 .fc__stage { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
+  .fc--v2 .fc__figure,
+  .fc--v2 .fc__figure--3d {
+    grid-column: 1;
+    grid-row: auto;
+    /* 单栏时用确定高度反推宽度，保证与竖版画面同比例 */
+    height: min(560px, 62vh);
+    width: auto;
+    max-width: 100%;
+    min-height: 0;
+    aspect-ratio: 480 / 854;
+    justify-self: center;
+  }
+  .fc--v2 .fc__meta,
+  .fc--v2 .fc__bubble { grid-column: 1; grid-row: auto; min-width: 0; }
+  .fc--v2 .fc__bubble { max-height: min(52vh, 460px); align-self: start; }
+}
+
+/* ============================================================
+   江万里 · 数字人主舞台（电影字幕式）
+   左：人物小传 ｜ 中：数字人 ｜ 右：留白
+   回答以影院字幕形式出现在数字人正下方，随语音逐字浮现。
+   ============================================================ */
+.fc--v2 .fc__cinema {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: 1560px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  display: grid;
+  /* 左右各占一份等宽留白，中间列即屏幕正中 */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 760px) minmax(0, 1fr);
+  /* 单行撑满整个可用高度，剩余空间由中间列内部再分配 */
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+  gap: clamp(14px, 2vw, 40px);
+  padding: clamp(14px, 2.2vh, 34px) clamp(18px, 3.2vw, 48px) clamp(8px, 1.2vh, 14px);
+}
+
+/* ---- 左侧：人物小传 ---- */
+.fc--v2 .fc__cineInfo {
+  grid-column: 1;
+  justify-self: end;
+  align-self: center;
+  width: clamp(238px, 23vw, 340px);
+  max-width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 22px 24px 24px;
+  border-radius: 20px;
+  border: 1px solid rgba(214, 178, 111, 0.20);
+  background: rgba(255, 250, 240, 0.055);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.36);
+  text-align: left;
+}
+.fc--v2 .fc__cineInfo h1 {
+  margin: 2px 0 4px;
+  color: #f4ecdc;
+  font-size: clamp(26px, 2.4vw, 34px);
+}
+.fc--v2 .fc__cineInfo .fc__title {
+  color: rgba(236, 229, 216, 0.76);
+  font-size: 14px;
+}
+.fc--v2 .fc__cineInfo .fc__quote {
+  margin-top: 14px;
+  padding-left: 12px;
+  border-left: 3px solid #c69a4b;
+  color: #dcc292;
+  font-size: 14.5px;
+  text-align: left;
+}
+.fc--v2 .fc__bio {
+  margin-top: 14px;
+  color: rgba(236, 229, 216, 0.70);
+  font-size: 13.5px;
+  line-height: 1.95;
+  text-align: justify;
+}
+
+/* 固定问题：竖排在人物卡下方 */
+.fc--v2 .fc__cineAsk {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(214, 178, 111, 0.18);
+}
+.fc--v2 .fc__cineAskLbl {
+  margin-bottom: 2px;
+  color: rgba(236, 229, 216, 0.48);
+  font-size: 11.5px;
+  letter-spacing: 0.1em;
+}
+.fc--v2 .fc__cineAsk button {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(214, 178, 111, 0.24);
+  background: rgba(255, 250, 240, 0.05);
+  color: #dcc79a;
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, transform 0.16s ease;
+}
+.fc--v2 .fc__cineAsk button:hover:not(:disabled) {
+  background: rgba(214, 178, 111, 0.16);
+  color: #f2dfae;
+  transform: translateX(2px);
+}
+.fc--v2 .fc__cineAsk button:disabled { opacity: 0.5; cursor: default; }
+
+/* ---- 中间：数字人主舞台 ---- */
+.fc--v2 .fc__cineMain {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* 撑满所在栅格行，数字人再把剩余高度全吃掉 */
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.fc--v2 .fc__cineStage {
+  position: relative;
+  /* 自动吃满「减去字幕与喇叭」后的全部高度，不再依赖固定像素推算 */
+  flex: 1 1 auto;
+  min-height: 220px;
+  height: auto;
+  max-height: 100%;
+  /* 保持原视频比例整体等比放大，只去掉最上方一条绿边，全身完整 */
+  aspect-ratio: 480 / 824;
+  width: auto;
+  max-width: 100%;
+  justify-self: center;
+  align-self: center;
+  border-radius: 26px;
+  overflow: hidden;
+  border: 1px solid rgba(214, 178, 111, 0.24);
+  background:
+    radial-gradient(78% 52% at 50% 16%, rgba(198, 154, 75, 0.20), transparent 64%),
+    linear-gradient(180deg, #1d2833 0%, #141d26 58%, #0c1319 100%);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+/* 画面裁切偏上，去掉上方绿幕留白，人物整体更饱满 */
+.fc--v2 .fc__cineStage :deep(.lta__canvas) {
+  /* 裁切只发生在画面上缘（绿幕留白），下半身完整保留 */
+  object-position: center bottom;
+}
+/* 四周压暗，画面更聚焦 */
+.fc--v2 .fc__cineStage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(12, 18, 24, 0.08), rgba(12, 18, 24, 0.22)),
+    radial-gradient(124% 92% at 50% 44%, transparent 54%, rgba(8, 12, 16, 0.46) 100%);
+}
+
+/* ---- 字幕区（数字人正下方，电影字幕式） ---- */
+.fc--v2 .fc__cineSubtitle {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  flex: none;
+  width: min(660px, 100%);
+  /* 固定高度，逐字浮现时下方按钮不会跟着跳动 */
+  height: 62px;
+  margin-top: 8px;
+  text-align: center;
+}
+.fc--v2 .fc__cineLine {
+  margin: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  font-size: clamp(15px, 1.02vw, 16px);
+  line-height: 1.8;
+  letter-spacing: 0.03em;
+  color: #f6eedd;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9), 0 0 26px rgba(0, 0, 0, 0.7);
+}
+/* 逐字浮现时的光标 */
+.fc--v2 .fc__cineLine.is-typing::after {
+  content: "";
+  display: inline-block;
+  width: 0.44em;
+  height: 1em;
+  margin-left: 4px;
+  vertical-align: -0.14em;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #f2dda6, #c69a4b);
+  animation: fcCaret 1s steps(1) infinite;
+}
+@keyframes fcCaret {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.fc--v2 .fc__cineLine--wait {
+  color: rgba(236, 229, 216, 0.68);
+  animation: fcBreath 1.8s ease-in-out infinite;
+}
+@keyframes fcBreath {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.95; }
+}
+.fc--v2 .fc__cineLine--idle { color: rgba(236, 229, 216, 0.50); font-size: 14px; }
+.fc--v2 .fc__cineLine--err { color: #f0a9a0; font-size: 14.5px; }
+
+/* ---- 操作区：默认问题 + 喇叭 ---- */
+.fc--v2 .fc__cineActions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: none;
+  gap: 8px;
+  width: 100%;
+  margin-top: 6px;
+}
+.fc--v2 .fc__cineActions .fc__chips {
+  max-width: 620px;
+  margin-bottom: 0;
+  gap: 10px;
+}
+.fc--v2 .fc__cineActions .fc__chips button {
+  padding: 8px 16px;
+  border: 1px solid rgba(214, 178, 111, 0.30);
+  background: rgba(255, 250, 240, 0.06);
+  color: #dcc79a;
+  font-size: 13px;
+  box-shadow: none;
+  backdrop-filter: blur(8px);
+}
+.fc--v2 .fc__cineActions .fc__chips button:hover:not(:disabled) {
+  background: rgba(214, 178, 111, 0.18);
+  color: #f2dfae;
+  transform: translateY(-1px);
+}
+
+.fc--v2 .fc__micRound {
+  display: grid;
+  place-items: center;
+  width: 78px;
+  height: 78px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(214, 178, 111, 0.42);
+  background: radial-gradient(circle at 50% 32%, rgba(214, 178, 111, 0.30), rgba(19, 28, 37, 0.94) 72%);
+  color: #f2e2bb;
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.46), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+.fc--v2 .fc__micRound:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: rgba(214, 178, 111, 0.72);
+  box-shadow: 0 20px 42px rgba(0, 0, 0, 0.5), 0 0 0 6px rgba(214, 178, 111, 0.08);
+}
+.fc--v2 .fc__micRound:disabled { opacity: 0.5; cursor: default; }
+.fc--v2 .fc__micRound .fc__micIcon { font-size: 30px; line-height: 1; }
+.fc--v2 .fc__micRound.is-rec {
+  border-color: rgba(231, 118, 100, 0.72);
+  background: radial-gradient(circle at 50% 32%, rgba(231, 118, 100, 0.48), rgba(58, 20, 18, 0.94) 72%);
+  color: #ffe8e3;
+  animation: micpulse 1.1s infinite;
+}
+/* 右侧留白（与左栏等宽，保证数字人真正居中） */
+.fc--v2 .fc__cineSpacer { grid-column: 3; }
+
+/* 中窄屏：单列堆叠，仍是数字人为主 */
+@media (max-width: 1240px) {
+  .fc--v2 .fc__cinema {
+    /* 单列时改成纵向流式排列，避免栅格居中导致内容互相压叠 */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 18px;
+    overflow-y: auto;
+    padding: clamp(58px, 7vh, 74px) clamp(16px, 4vw, 32px) clamp(14px, 3vh, 26px);
+  }
+  .fc--v2 .fc__cineInfo {
+    justify-self: center;
+    width: min(560px, 100%);
+    order: 2;
+    /* 不参与收缩，否则内容会比卡片高而压到下一块 */
+    flex: none;
+  }
+  .fc--v2 .fc__cineMain { width: 100%; order: 1; flex: none; }
+  .fc--v2 .fc__cineStage { height: min(58vh, 540px); max-width: 100%; flex: none; }
+  .fc--v2 .fc__cineSpacer { display: none; }
 }
 </style>

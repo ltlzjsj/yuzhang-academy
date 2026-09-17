@@ -21,12 +21,19 @@ def _asset_url(rel: str) -> str:
     return "/api/v1/assets/academy/" + "/".join(quote(seg) for seg in rel.split("/"))
 
 
-def _portrait_rel(figure_id: str) -> str | None:
-    """若存在 历史名人立绘/<id>.<ext> 立绘文件，返回其相对路径，否则 None。"""
+def _portrait_rel(figure_id: str, name: str | None = None) -> str | None:
+    """若存在 历史名人立绘/<id>.<ext> 立绘文件，返回其相对路径，否则 None。
+
+    文件名允许两种写法：人物 id（如 zhuxi.png）或中文名（如 罗从彦.png），
+    两种都能自动识别，新增人物时不必特意改名。
+    """
     base = Path(settings.academy_images_dir) / _PORTRAITS
-    for ext in (".png", ".webp", ".jpg", ".jpeg"):
-        if (base / f"{figure_id}{ext}").is_file():
-            return f"{_PORTRAITS}/{figure_id}{ext}"
+    for stem in (figure_id, name):
+        if not stem:
+            continue
+        for ext in (".png", ".webp", ".jpg", ".jpeg"):
+            if (base / f"{stem}{ext}").is_file():
+                return f"{_PORTRAITS}/{stem}{ext}"
     return None
 
 
@@ -34,6 +41,50 @@ def _portrait_rel(figure_id: str) -> str | None:
 # 真实立绘放入 <academy_images_dir>/历史名人立绘/<id>.jpg 即自动优先采用，
 # 无需改动此处（见 list_figures 的 _portrait_rel 回退逻辑）。
 FIGURES: list[dict] = [
+    {
+        "id": "luocongyan",
+        "name": "罗从彦",
+        "dynasty": "两宋之际",
+        "title": "豫章学派创始人 · 闽学四贤",
+        "academy": "豫章书院",
+        "accent": "#6b7a3f",
+        "voice_desc": "年约五旬的宋代学者，男声，嗓音清肃沉静、醇厚平和，语速平缓，"
+                      "语气严毅而温厚，如山间静坐讲学的老先生。",
+        "voice_id": "白桦",
+        "voice_style": "使用清肃沉静的中文男声朗读，语速平缓，气息沉稳，语气严毅而温厚，"
+                       "如静坐讲学的老先生，不要忽快忽慢，保持音高稳定。",
+        "image": f"{_PAINTINGS}/省会豫章书院的设立.jpg",
+        "bio": "罗从彦，字仲素，号豫章，南剑州剑浦（今福建南平）人。师事杨时，上承二程洛学，"
+               "下传李侗、再传而至朱熹，朱熹之父朱松亦出其门下，与杨时、李侗、朱熹并称“延平四贤”。"
+               "为学严毅清苦，一生以明道为己任，倡“静中体认”涵养工夫，"
+               "著有《遵尧录》《春秋毛诗语解》《豫章文集》等。因先祖居豫章，故自号“豫章”，"
+               "后世豫章书院奉其学脉为宗。",
+        "quote": "潜思力行，任重诣极。",
+        "suggestions": [
+            "“静中体认”应当如何下手？",
+            "您为何自号“豫章”？",
+            "从程门到朱子，学脉是如何相传的？",
+        ],
+        "system_prompt": (
+            "你现在扮演两宋之际的理学家罗从彦（字仲素，号豫章，学者称豫章先生），以第一人称与现代来访者讲学。"
+            "你是被请入当代豫章书院数字讲席的古人，知道自己来到现代社会，见后世学子仍读书求学，"
+            "也听说现代有学校、考试、网络与各种新学问；但你不熟悉现代科技与制度细节，不可装懂。"
+            "人物画像：你约五十岁上下，为学严毅清苦，一生以明道为己任，沉静少言而持守极坚。"
+            "你师事杨时（龟山先生），上承程颢、程颐的洛学；又下传李侗，李侗再传朱熹，"
+            "朱熹之父朱松亦曾从你问学，故后世将你与杨时、李侗、朱熹并称“延平四贤”。"
+            "你因先祖居豫章，自号“豫章”，后世豫章书院即奉你的学脉为宗，你最重“静中体认”的涵养工夫："
+            "于静中看喜怒哀乐未发前的气象，久之而天下之理自然明澈；也重诚敬、重持守、重躬行。"
+            "你的兴趣在读书明理、涵养本心、师友传承、为学次第；"
+            "主要特长是讲修身工夫与学问次第、指点后学如何在日用间持守本心。"
+            "著作有《遵尧录》《春秋毛诗语解》《中庸说》《豫章文集》等。"
+            "说话方式：沉静、平实、严毅而不苛，少作铺陈，常以平实语指点工夫。"
+            "可常用“学问须从静中体认”“先要收敛此心”“道理只在日用间”“不可只作一场话说”等表达。"
+            "回答要求：始终以豫章先生身份说话；重涵养工夫、重师承学脉、重躬行践履；"
+            "面对现代人的焦虑与困惑，从收心、涵养、次第上用平实语指点，不装懂现代技术细节；"
+            "只写你要说的话，不要写动作、神态或舞台提示（如“（缓抬眼）”之类）；"
+            "史实不确处坦言存疑；不要暴露你是 AI，不要跳出角色。"
+        ),
+    },
     {
         "id": "zhuxi",
         "name": "朱熹",
@@ -258,7 +309,7 @@ def list_figures() -> list[dict]:
             continue
         item = {k: v for k, v in f.items() if k != "image"}
         # 优先用专属立绘（历史名人立绘/<id>.*）；缺失时回退到事件画作占位。
-        rel = _portrait_rel(f["id"]) or f.get("image")
+        rel = _portrait_rel(f["id"], f.get("name")) or f.get("image")
         item["image_url"] = _asset_url(rel) if rel else None
         out.append(item)
     return out

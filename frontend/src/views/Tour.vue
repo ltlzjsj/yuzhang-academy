@@ -14,7 +14,8 @@ interface Scene {
 }
 
 const scenes: Scene[] = [
-  { id: 'pano', name: '测试全景', desc: '2:1 等距柱状全景测试', src: assetUrl('360全景/测试图/panorama.jpg') },
+  // 书院园林 360° 全景（来源：Poly Haven "Chinese Garden" by Andreas Mischok, CC0）
+  { id: 'garden', name: '书院园林', desc: '江南园林实景 · 可环视 360°', src: assetUrl('360全景/书院园林/panorama.jpg') },
   { id: 'gate', name: '书院正门', desc: '书院入口实景', src: assetUrl('360全景/正门/scene.jpg') },
   { id: 'aerial', name: '书院俯瞰', desc: '书院整体俯瞰实景', src: assetUrl('360全景/俯瞰图/scene.jpg') },
 ]

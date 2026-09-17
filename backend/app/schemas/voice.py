@@ -16,6 +16,10 @@ class TTSIn(BaseModel):
     format: str | None = Field(default=None, description="mp3 | wav | pcm16")
 
 
+class LivetalkingTalkIn(TTSIn):
+    sessionid: str = Field(..., min_length=1, description="LiveTalking WebRTC 会话 ID")
+
+
 class VoiceListOut(BaseModel):
     voices: list[str]
     default: str

@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import * as L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import { useRouter } from 'vue-router'
 
 interface Academy {
   name: string
@@ -54,7 +55,26 @@ const CITY_ACADEMIES: Record<string, Academy[]> = {
   ],
 }
 
+// 各书院的配图（相对“书院文化图片”目录）。有实拍用实拍，没有的用书院事件画。
+// 悬停时在简介左侧显示一张简图；找不到配图的书院回退成首字印章。
+const ACADEMY_IMAGES: Record<string, string> = {
+  豫章书院: '组织画家绘制了十大书院事件图/省会豫章书院的设立.jpg',
+  白鹿洞书院: '组织拍摄了江西遗存书院/江西四大书院/白鹿洞书院/白鹿洞书院正学之门前古牌坊.JPG',
+  象山书院: '组织拍摄了江西遗存书院/江西四大书院/象山书院/象山书院遗址全景.JPG',
+  鹅湖书院: '组织拍摄了江西遗存书院/江西四大书院/鹅湖书院/鹅湖书院全景图.jpg',
+  白鹭洲书院: '组织拍摄了江西遗存书院/江西四大书院/白鹭洲书院/白鹭洲书院风月楼.JPG',
+  阳明书院: '组织拍摄了江西遗存书院/赣州阳明书院.JPG',
+  潋江书院: '组织拍摄了江西遗存书院/赣州兴国潋江书院.JPG',
+  龙江书院: '组织拍摄了江西遗存书院/吉安井冈山龙江书院.jpg',
+  华林书院: '组织画家绘制了十大书院事件图/胡仲尧兴华林书院.jpg',
+}
+
+function assetThumb(src: string, w = 120, h = 120) {
+  return '/api/v1/assets/thumb/academy/' + src.split('/').map(encodeURIComponent).join('/') + `?w=${w}&h=${h}`
+}
+
 const el = ref<HTMLDivElement | null>(null)
+const router = useRouter()
 let map: L.Map | null = null
 let geoLayer: L.GeoJSON | null = null
 let ro: ResizeObserver | null = null
@@ -86,13 +106,20 @@ function tooltipHtml(name: string): string {
   const items = CITY_ACADEMIES[name] || []
   const rows = items.length
     ? items
-        .map(
-          (a) => `
-            <div style="padding:6px 10px;border-top:1px solid #efe9dc;">
-              <div style="color:#2c3e50;font-weight:700;font-size:12px;line-height:1.4;">${a.name}</div>
-              <div style="margin-top:2px;color:#6b6b6b;font-size:11px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${a.desc}</div>
-            </div>`,
-        )
+        .map((a) => {
+          const img = ACADEMY_IMAGES[a.name]
+          const thumb = img
+            ? `<img src="${assetThumb(img)}" alt="${a.name}" style="width:46px;height:46px;border-radius:6px;object-fit:cover;flex:none;background:#f2efe8;" />`
+            : `<span style="width:46px;height:46px;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;background:#f4efe4;color:#b08a52;font-size:18px;font-weight:700;">${a.name.slice(0, 1)}</span>`
+          return `
+            <div style="display:flex;gap:8px;align-items:flex-start;padding:6px 10px;border-top:1px solid #efe9dc;">
+              ${thumb}
+              <div style="min-width:0;">
+                <div style="color:#2c3e50;font-weight:700;font-size:12px;line-height:1.4;">${a.name}</div>
+                <div style="margin-top:2px;color:#6b6b6b;font-size:11px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${a.desc}</div>
+              </div>
+            </div>`
+        })
         .join('')
     : `<div style="padding:8px 10px;color:#6b6b6b;font-size:11px;">暂无书院资料</div>`
 
@@ -112,6 +139,7 @@ async function init() {
   map = L.map(el.value, {
     center: [27.6, 115.9],
     zoom: 7,
+    minZoom: 4,
     zoomControl: false,
     scrollWheelZoom: true,
   })
@@ -120,7 +148,7 @@ async function init() {
     '&copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
   const satellite = L.tileLayer(
     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    { attribution, maxZoom: 18 },
+    { attribution, minZoom: 4, maxZoom: 18, noWrap: true },
   )
   satellite.addTo(map)
 
@@ -143,10 +171,24 @@ async function init() {
         direction: 'top',
         opacity: 1,
       })
+      layer.on('click', () => {
+        router.push({ path: '/academies', query: { city: name } })
+      })
     },
   }).addTo(map)
 
-  map.fitBounds(geoLayer.getBounds(), { padding: [24, 24] })
+  // 缩放下限锁死在江西范围：最远只能缩到刚好看全江西，且不能拖出省界
+  const jxBounds = geoLayer.getBounds()
+  const applyJiangxiLimits = () => {
+    if (!map || !geoLayer) return
+    const bounds = geoLayer.getBounds()
+    const fitZoom = map.getBoundsZoom(bounds, false, L.point(24, 24))
+    map.setMinZoom(fitZoom)
+    map.setMaxBounds(bounds.pad(0.08))
+    return fitZoom
+  }
+  const fitZoom = applyJiangxiLimits() ?? map.getZoom()
+  map.setView(jxBounds.getCenter(), fitZoom)
 
   for (const f of geo.features) {
     const name = f.properties?.name as string
@@ -172,7 +214,11 @@ async function init() {
     if (openTip) requestAnimationFrame(() => clampTooltip(openTip))
   })
 
-  ro = new ResizeObserver(() => map?.invalidateSize())
+  ro = new ResizeObserver(() => {
+    map?.invalidateSize()
+    const z = applyJiangxiLimits()
+    if (z !== undefined && map && map.getZoom() < z) map.setZoom(z)
+  })
   ro.observe(el.value)
   setTimeout(() => map?.invalidateSize(), 0)
 }
@@ -211,7 +257,7 @@ onBeforeUnmount(() => {
 
 /* 悬停富文本：允许换行 */
 :deep(.leaflet-tooltip.jmap__tipbox) {
-  width: 240px;
+  width: 300px;
   box-sizing: border-box;
   padding: 0;
   background: rgba(255, 255, 255, 0.97);

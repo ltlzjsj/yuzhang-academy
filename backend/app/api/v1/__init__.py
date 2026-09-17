@@ -4,6 +4,7 @@ from app.api.v1 import (
     activities,
     agent,
     auth,
+    avatar,
     chat,
     chunks,
     conversations,
@@ -34,3 +35,4 @@ api_router.include_router(agent.router)
 api_router.include_router(figures.router)
 api_router.include_router(activities.router)
 api_router.include_router(voice.router)
+api_router.include_router(avatar.router)

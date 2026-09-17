@@ -151,8 +151,8 @@ def _asset_root(kind: str) -> Path:
 async def image_thumb(
     kind: str,
     src: str,
-    w: int = Query(288, ge=64, le=640),
-    h: int = Query(192, ge=64, le=640),
+    w: int = Query(288, ge=64, le=2048),
+    h: int = Query(192, ge=64, le=2048),
 ) -> FileResponse:
     root = _asset_root(kind).resolve()
     fp = (root / src.lstrip("/")).resolve()

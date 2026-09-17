@@ -10,6 +10,9 @@ const router = useRouter()
 const route = useRoute()
 
 const isApp = computed(() => route.meta.shell === 'app')
+// 沉浸式页面（meta.immersive）隐藏站点顶栏，把高度全部让给内容。
+// 目前没有路由启用它，保留为可选开关：想全屏时在路由 meta 里加 immersive: true。
+const isImmersive = computed(() => !!route.meta.immersive)
 
 onMounted(async () => {
   if (auth.token && !auth.user) {
@@ -24,8 +27,11 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="shell-root" :class="isApp ? 'shell-root--app' : 'shell-root--portal'">
-    <AppHeader />
+  <div
+    class="shell-root"
+    :class="[isApp ? 'shell-root--app' : 'shell-root--portal', { 'shell-root--immersive': isImmersive }]"
+  >
+    <AppHeader v-if="!isImmersive" />
     <main class="shell-main">
       <RouterView v-slot="{ Component }">
         <component :is="Component" />

@@ -55,10 +55,30 @@ class Settings(BaseSettings):
     mimo_tts_voice: str = "mimo_default"   # 预置音色: 冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean ...
     mimo_tts_format: str = "mp3"           # wav | pcm16 | mp3
 
+    # 音素对齐（faster-whisper）：用于把 TTS 音频对齐到字级时间戳，驱动口型。
+    faster_whisper_model_dir: str = "models/faster-whisper-small"
+    faster_whisper_device: str = "cuda"        # "cuda" | "cpu"
+    faster_whisper_compute_type: str = "float16"  # float16 (GPU) | int8 (CPU)
+
     minimax_api_key: str = ""
     minimax_base_url: str = "https://api.minimaxi.com/anthropic"
     minimax_model: str = "MiniMax-M2.7"
     minimax_max_tokens: int = 2048
+
+    # AI 合影：NanoApple 中转站图像生成
+    # Gemini 3.1 走原生 generateContent（多图参考融合）；GPT Image 2 仅文生图。
+    gemini_api_style: str = "google"          # "google" | "openai"
+    gemini_api_base_url: str = "https://cn.nanoapple.cc/v1beta"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-3.1-flash-image-preview-time"
+    gemini_openai_path: str = "/chat/completions"
+
+    gpt_image_api_base_url: str = "https://cn.nanoapple.cc/v1"
+    gpt_image_api_key: str = ""
+    gpt_image_model: str = "gpt-image-2-time"
+    gpt_image_size: str = "1024x1024"
+    gpt_image_quality: str = "standard"
+    gpt_image_style: str = "vivid"
 
     jwt_secret: str = "change-me"
     jwt_algorithm: str = "HS256"

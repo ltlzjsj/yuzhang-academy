@@ -149,6 +149,26 @@ const academies = [
       </div>
     </section>
 
+    <!-- 更多探索 -->
+    <section class="shell sec">
+      <h2 class="sec__title h-serif">更多探索</h2>
+      <p class="sec__lead">从百科、图谱到闯关，继续走进书院文化</p>
+      <div class="explore">
+        <RouterLink class="explore__card" to="/academies">
+          <strong class="h-serif">书院百科</strong>
+          <span>一院一史 · 沿革与诗文</span>
+        </RouterLink>
+        <RouterLink class="explore__card" to="/relations">
+          <strong class="h-serif">理学图谱</strong>
+          <span>人物关系 · 时间轴</span>
+        </RouterLink>
+        <RouterLink class="explore__card" to="/quiz">
+          <strong class="h-serif">闯关答题</strong>
+          <span>书院知识挑战赛</span>
+        </RouterLink>
+      </div>
+    </section>
+
     <!-- CTA -->
     <section class="shell">
       <div class="ov__cta">
@@ -236,7 +256,17 @@ const academies = [
 .acard__cap span { font-size: 13px; color: var(--muted); }
 
 /* 分布图 */
-.mapwrap { border-radius: 16px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow-soft); background: #fff; }
+.mapwrap { isolation: isolate; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow-soft); background: #fff; }
+
+/* 更多探索 */
+.explore { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.explore__card { display: flex; flex-direction: column; gap: 6px; padding: 26px 22px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow-soft); text-decoration: none; transition: transform .25s var(--ease), box-shadow .25s var(--ease); }
+.explore__card:hover { transform: translateY(-5px); box-shadow: var(--shadow-lift); }
+.explore__card strong { font-size: 22px; font-weight: 800; color: var(--ink); }
+.explore__card span { font-size: 13.5px; color: var(--sub); }
+@media (max-width: 760px) {
+  .explore { grid-template-columns: 1fr; }
+}
 
 /* CTA */
 .ov__cta {

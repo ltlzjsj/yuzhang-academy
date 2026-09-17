@@ -4,6 +4,8 @@ __pycache__/
 *.pyo
 .venv/
 .env
+.env.local
+.env.*.local
 backend/uploads/
 backend/.pycache_check/
 
@@ -35,6 +37,7 @@ yzsfxy/
 # 不提交 Blender 源文件和旧版本备份
 frontend/public/models/*.blend
 frontend/public/models/*_previous.glb
+frontend/public/models/*.glb.backup
 
 # Large data dumps / archives (do NOT commit — GitHub rejects >100MB)
 *.zip
