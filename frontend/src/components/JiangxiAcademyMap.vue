@@ -430,7 +430,8 @@ onBeforeUnmount(() => {
 }
 .jmap__chart {
   width: 100%;
-  height: 560px;
+  /* 地图按“刚好装下江西省”取景，所以高度越高，省域看得越大 */
+  height: 640px;
   background: #e7ecdf;
 }
 .jmap__hint {
@@ -684,7 +685,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 760px) {
   .jmap__chart {
-    height: 420px;
+    height: 480px;
   }
 }
 </style>
