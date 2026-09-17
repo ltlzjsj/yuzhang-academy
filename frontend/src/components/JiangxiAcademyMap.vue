@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import * as L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useRouter } from 'vue-router'
+import { ACADEMIES } from '@/data/academies'
 
 interface Academy {
   name: string
@@ -80,6 +81,68 @@ let map: L.Map | null = null
 let geoLayer: L.GeoJSON | null = null
 let ro: ResizeObserver | null = null
 let openTip: L.Tooltip | null = null
+// 卡片（tooltip）改成可交互后，需要自己管理"什么时候关"：
+// 移出省份不立刻关，给鼠标留 320ms 走到卡片上；鼠标进入卡片则取消关闭。
+let tipCloseTimer: number | undefined
+let tipHovered = false
+
+function cancelTipClose() {
+  if (tipCloseTimer !== undefined) {
+    window.clearTimeout(tipCloseTimer)
+    tipCloseTimer = undefined
+  }
+}
+
+function closeTipNow() {
+  cancelTipClose()
+  tipHovered = false
+  openTip?.close()
+  openTip = null
+}
+
+function scheduleTipClose() {
+  cancelTipClose()
+  tipCloseTimer = window.setTimeout(() => {
+    tipCloseTimer = undefined
+    if (tipHovered) return
+    openTip?.close()
+    openTip = null
+  }, 320)
+}
+
+function onTipClick(ev: MouseEvent) {
+  const el = (ev.target as HTMLElement | null)?.closest('.jmap__card') as HTMLElement | null
+  if (!el) return
+  ev.stopPropagation()
+  const acad = el.dataset.acad || ''
+  const id = ACADEMY_ID[acad]
+  closeTipNow()
+  if (id) {
+    router.push(`/academies/${id}`)
+    return
+  }
+  const city = Object.keys(CITY_ACADEMIES).find((c) => (CITY_ACADEMIES[c] || []).some((a) => a.name === acad))
+  router.push({ path: '/academies', query: city ? { city } : {} })
+}
+
+function bindTipEvents(tip: L.Tooltip) {
+  const el = tip.getElement() as HTMLElement | undefined
+  if (!el || el.dataset.bound === '1') return
+  el.dataset.bound = '1'
+  // 关键：让卡片自己吞掉鼠标事件。否则 mousedown 会冒泡到地图容器，
+  // 被 Leaflet 的拖拽逻辑接管，卡片的点击就被当成"拖地图"而丢失。
+  L.DomEvent.disableClickPropagation(el)
+  L.DomEvent.disableScrollPropagation(el)
+  el.addEventListener('mouseenter', () => {
+    tipHovered = true
+    cancelTipClose()
+  })
+  el.addEventListener('mouseleave', () => {
+    tipHovered = false
+    scheduleTipClose()
+  })
+  el.addEventListener('click', onTipClick)
+}
 // 全屏展示：优先用浏览器全屏 API（同一个地图实例直接铺满，内容与缩放位置完全一致），
 // 不支持的浏览器退化成 CSS 覆盖层。两种情况下都用 .jmap--full 控制尺寸
 // ——浏览器的 :fullscreen 伪类在部分浏览器会被解析器丢掉，靠类名更稳。
@@ -164,6 +227,9 @@ function clampTooltip(tip: L.Tooltip | null) {
   container.style.transform = `translate3d(${parseFloat(m[1]) + dx}px, ${parseFloat(m[2]) + dy}px, 0)`
 }
 
+// 书院名 → 详情页 id（有详情页的优先跳详情，没有的跳到该市书院列表）
+const ACADEMY_ID: Record<string, string> = Object.fromEntries(ACADEMIES.map((a) => [a.name, a.id]))
+
 function tooltipHtml(name: string): string {
   const items = CITY_ACADEMIES[name] || []
   const rows = items.length
@@ -173,17 +239,19 @@ function tooltipHtml(name: string): string {
           const thumb = img
             ? `<img src="${assetThumb(img)}" alt="${a.name}" style="width:46px;height:46px;border-radius:6px;object-fit:cover;flex:none;background:#f2efe8;" />`
             : `<span style="width:46px;height:46px;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;background:#f4efe4;color:#b08a52;font-size:18px;font-weight:700;">${a.name.slice(0, 1)}</span>`
+          // 每条书院都是可点击条目：点击跳到该书院详情（没有详情页的跳到该市列表）
+          const detail = ACADEMY_ID[a.name] ? `查看 ›` : `看该市 ›`
           return `
-            <div style="display:flex;gap:8px;align-items:flex-start;padding:6px 10px;border-top:1px solid #efe9dc;">
+            <div class="jmap__card" data-acad="${a.name}" title="查看《${a.name}》">
               ${thumb}
               <div style="min-width:0;">
-                <div style="color:#2c3e50;font-weight:700;font-size:12px;line-height:1.4;">${a.name}</div>
+                <div style="color:#2c3e50;font-weight:700;font-size:12px;line-height:1.4;">${a.name}<span style="float:right;color:#b08a52;font-weight:600;">${detail}</span></div>
                 <div style="margin-top:2px;color:#6b6b6b;font-size:11px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${a.desc}</div>
               </div>
             </div>`
         })
         .join('')
-    : `<div style="padding:8px 10px;color:#6b6b6b;font-size:11px;">暂无书院资料</div>`
+    : `<div class="jmap__empty">暂无书院资料</div>`
 
   return `
     <div style="white-space:normal;">
@@ -232,8 +300,17 @@ async function init() {
         className: 'jmap__tipbox',
         direction: 'top',
         opacity: 1,
+        // 关键：卡片必须可交互，否则鼠标一移进卡片就"离开"了本省多边形，
+        // 既会立刻关闭卡片，又会把点击穿透给卡片下方的邻省（点豫章书院跳成九江）。
+        interactive: true,
+        sticky: false,
       })
+      // 覆盖 Leaflet 默认的"移出图形立即关闭"，改为延时关闭（见 scheduleTipClose）
+      layer.off('mouseout', (layer as any).closeTooltip, layer)
+      layer.on('mouseout', scheduleTipClose)
+      layer.on('mouseover', cancelTipClose)
       layer.on('click', () => {
+        closeTipNow()
         router.push({ path: '/academies', query: { city: name } })
       })
     },
@@ -265,13 +342,20 @@ async function init() {
   map.on('tooltipopen', (e: any) => {
     const tip = e.tooltip as L.Tooltip
     if (tip.options.className === 'jmap__tipbox') {
+      cancelTipClose()
+      tipHovered = false
       openTip = tip
+      bindTipEvents(tip)
       requestAnimationFrame(() => clampTooltip(tip))
     }
   })
   map.on('tooltipclose', (e: any) => {
     if (e.tooltip === openTip) openTip = null
   })
+  // 缩放时收起卡片（卡片锚定在省份上，平移时会跟着走，不必关闭）
+  map.on('zoomstart', () => closeTipNow())
+  // 点空白处收起卡片
+  map.on('click', () => closeTipNow())
   map.on('zoomend moveend', () => {
     if (openTip) requestAnimationFrame(() => clampTooltip(openTip))
   })
@@ -412,6 +496,28 @@ onBeforeUnmount(() => {
 }
 :deep(.leaflet-tooltip.jmap__tipbox::before) {
   display: none;
+}
+
+/* 卡片里的每条书院：可点击，带悬停反馈 */
+:deep(.jmap__tipbox .jmap__card) {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 7px 10px;
+  border-top: 1px solid #efe9dc;
+  cursor: pointer;
+  transition: background 0.14s ease;
+}
+:deep(.jmap__tipbox .jmap__card:hover) {
+  background: #fbf5e8;
+}
+:deep(.jmap__tipbox .jmap__card:last-child) {
+  border-radius: 0 0 10px 10px;
+}
+:deep(.jmap__tipbox .jmap__empty) {
+  padding: 8px 10px;
+  color: #6b6b6b;
+  font-size: 11px;
 }
 
 /* 常驻城市名标注 */
