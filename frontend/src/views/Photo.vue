@@ -36,7 +36,7 @@ function thumbUrl(src: string, w = 1200, h = 900) {
 
 const people: Person[] = [
   { id: 'jiangwanli', name: '江万里', era: '先贤 · 书院人物', quote: '立志宜思真品格，读书须尽苦功夫。', intro: '以笃学与实干影响后世的先贤。', image2d: '/assets/historical/jiangwanli.png', image3d: '/assets/historical-3d/jiangwanli.jpg', accent: '#b44f2f' },
-  { id: 'luxiangshan', name: '陆象山', era: '南宋 · 1139—1193', quote: '宇宙便是吾心，吾心即是宇宙。', intro: '以心学思想闻名的理学家、教育家。', image2d: '/assets/historical/luxiangshan.png', image3d: '/assets/historical-3d/luxiangshan.jpg', accent: '#2f716b' },
+  { id: 'luxiangshan', name: '陆九渊', era: '南宋 · 1139—1193', quote: '宇宙便是吾心，吾心即是宇宙。', intro: '以心学思想闻名的理学家、教育家。', image2d: '/assets/historical/luxiangshan.png', image3d: '/assets/historical-3d/luxiangshan.jpg', accent: '#2f716b' },
   { id: 'lvzuqian', name: '吕祖谦', era: '南宋 · 1137—1181', quote: '学者须是务实，不务实则学无所益。', intro: '兼容并蓄、重视经世致用的学者。', image2d: '/assets/historical/lvzuqian.png', image3d: '/assets/historical-3d/lvzuqian.jpg', accent: '#8c6a3e' },
   { id: 'wangyangming', name: '王阳明', era: '明 · 1472—1529', quote: '破山中贼易，破心中贼难。', intro: '知行合一思想的提出者与践行者。', image2d: '/assets/historical/wangyangming.png', image3d: '/assets/historical-3d/wangyangming.jpg', accent: '#6d5b86' },
   { id: 'zhuxi', name: '朱熹', era: '南宋 · 1130—1200', quote: '问渠那得清如许？为有源头活水来。', intro: '理学集大成者，重视读书与实践。', image2d: '/assets/historical/zhuxi.png', image3d: '/assets/historical-3d/zhuxi.jpg', accent: '#356f68' },
