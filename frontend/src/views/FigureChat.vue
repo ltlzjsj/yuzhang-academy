@@ -53,17 +53,39 @@ const liveTalkingRef = ref<{ speak: (text: string) => Promise<number> } | null>(
 const cineLineRef = ref<HTMLElement | null>(null)
 // 朱熹暂时改用“画像开口说话 + 点头呼吸”，与吕祖谦保持一致。
 const useXmov = computed(() => false)
-// LiveTalking 实时数字人（WebRTC 口型驱动）：江万里、罗从彦。
-// 每人一套「待机动作 + 讲话动作」，待机视频通过 custom_config 在连接时指定。
-// zoom：画面等比放大倍数，按人物原片取景单独微调。
-// 罗从彦 2026-09 版素材换成全身取景（人脸比旧版小约 28%），放大 1.18 倍
-// 让页面上的观感与旧版接近，同时保留抬手讲学的手势动作。
+// LiveTalking 实时数字人（WebRTC 口型驱动）：全部历史人物统一走这条链路。
+// 素材来自「数字人」目录的「说话动作 + 待机动作」两段视频：
+//   data/avatars/<id>_lt        —— 说话视频逐帧导出（wav2lip 在上面改口型）
+//   data/custom/<id>_idle       —— 待机视频逐帧导出（静音时循环播放）
+// idle 通过 custom_config 在建立连接时传给 LiveTalking。
+// zoom：画面等比放大倍数，按人物原片取景单独标定（见注释，目标是各人面部在卡片上
+// 的占比接近，且放大后不切到头顶）。
 const LIVE_TALKING_AVATARS: Record<string, { avatar: string; idle?: string; zoom?: number }> = {
+  // 江万里：待机由服务启动参数 custom_jiangwanli.json 指定，这里不重复传
   jiangwanli: { avatar: 'jiangwanli_lt' },
   luocongyan: {
     avatar: 'luocongyan_lt',
     idle: JSON.stringify([{ audiotype: 1, imgpath: './data/custom/luocongyan_idle' }]),
     zoom: 1.18,
+  },
+  zhuxi: {
+    avatar: 'zhuxi_lt',
+    idle: JSON.stringify([{ audiotype: 1, imgpath: './data/custom/zhuxi_idle' }]),
+    zoom: 1.13,
+  },
+  lvzuqian: {
+    avatar: 'lvzuqian_lt',
+    idle: JSON.stringify([{ audiotype: 1, imgpath: './data/custom/lvzuqian_idle' }]),
+    zoom: 1.31,
+  },
+  // 陆九渊、王阳明原片为 4:3（480×640），头顶已贴近画面顶端，保持原样不放大
+  luxiangshan: {
+    avatar: 'luxiangshan_lt',
+    idle: JSON.stringify([{ audiotype: 1, imgpath: './data/custom/luxiangshan_idle' }]),
+  },
+  wangyangming: {
+    avatar: 'wangyangming_lt',
+    idle: JSON.stringify([{ audiotype: 1, imgpath: './data/custom/wangyangming_idle' }]),
   },
 }
 const liveTalkingAvatar = computed(() => LIVE_TALKING_AVATARS[fig.value?.id ?? ''] ?? null)
