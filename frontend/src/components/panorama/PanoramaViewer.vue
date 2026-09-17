@@ -8,6 +8,13 @@ const canvasEl = ref<HTMLCanvasElement | null>(null)
 const photoEl = ref<HTMLImageElement | null>(null)
 const mode = ref<'loading' | 'panorama' | 'photo' | 'error'>('loading')
 
+// 全屏（点击画面即切换）：优先浏览器原生全屏，不支持时用 CSS 覆盖层兜底，
+// 两种模式共用 .pv--full 控制尺寸。
+const isFullscreen = ref(false)
+const fullMode = ref(false)
+let nativeFsActive = false
+let pressInfo = { x: 0, y: 0, t: 0, moved: false, inside: false }
+
 // 普通照片：平移 + 缩放状态
 let fitScale = 1
 let scale = 1
@@ -214,19 +221,103 @@ function onResize() {
   }
 }
 
+// ---- 全屏 ----
+function syncFullscreenSize() {
+  isFullscreen.value = fullMode.value
+  // 容器尺寸变化：等布局稳定后重算（照片模式重新适配、全景模式更新相机比例）
+  nextTick(() => onResize())
+  requestAnimationFrame(() => onResize())
+  window.setTimeout(() => onResize(), 260)
+}
+
+function onFullscreenChange() {
+  if (document.fullscreenElement) {
+    nativeFsActive = true
+    fullMode.value = true
+  } else if (nativeFsActive) {
+    // 只有「本来在原生全屏、现在退出」才关闭；请求被浏览器拒绝时保留兜底状态
+    nativeFsActive = false
+    fullMode.value = false
+  }
+  syncFullscreenSize()
+}
+
+async function toggleFullscreen() {
+  const root = wrap.value
+  if (!root) return
+  if (fullMode.value && !document.fullscreenElement) {
+    fullMode.value = false
+    syncFullscreenSize()
+    return
+  }
+  if (document.fullscreenElement) {
+    await document.exitFullscreen().catch(() => {})
+    return
+  }
+  fullMode.value = true
+  syncFullscreenSize()
+  const req: ((o?: any) => Promise<void>) | undefined =
+    root.requestFullscreen?.bind(root) || (root as any).webkitRequestFullscreen?.bind(root)
+  if (req) {
+    try {
+      await req({ navigationUI: 'hide' })
+      nativeFsActive = true
+      return
+    } catch {
+      nativeFsActive = false
+    }
+  }
+}
+
+function onFsKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && fullMode.value && !document.fullscreenElement) {
+    fullMode.value = false
+    syncFullscreenSize()
+  }
+}
+
+// 点击画面切换全屏：按下到抬起之间几乎没移动才算「点击」，避免与拖动环视冲突
+function trackDown(e: PointerEvent) {
+  pressInfo = { x: e.clientX, y: e.clientY, t: performance.now(), moved: false, inside: true }
+}
+function trackMove(e: PointerEvent) {
+  if (pressInfo.moved) return
+  if (Math.abs(e.clientX - pressInfo.x) > 6 || Math.abs(e.clientY - pressInfo.y) > 6) pressInfo.moved = true
+}
+function trackUp(e: PointerEvent) {
+  if (!pressInfo.inside) return
+  pressInfo.inside = false
+  const el = e.target as HTMLElement | null
+  if (el?.closest('.pv__fs') || el?.closest('.pv__controls')) return
+  if (pressInfo.moved || performance.now() - pressInfo.t > 500) return
+  void toggleFullscreen()
+}
+
 onMounted(() => {
   load()
   window.addEventListener('resize', onResize)
+  document.addEventListener('fullscreenchange', onFullscreenChange)
+  document.addEventListener('webkitfullscreenchange', onFullscreenChange as EventListener)
+  window.addEventListener('keydown', onFsKeydown)
+  wrap.value?.addEventListener('pointerdown', trackDown)
+  window.addEventListener('pointermove', trackMove)
+  window.addEventListener('pointerup', trackUp)
 })
 onBeforeUnmount(() => {
   teardown()
   window.removeEventListener('resize', onResize)
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
+  document.removeEventListener('webkitfullscreenchange', onFullscreenChange as EventListener)
+  window.removeEventListener('keydown', onFsKeydown)
+  wrap.value?.removeEventListener('pointerdown', trackDown)
+  window.removeEventListener('pointermove', trackMove)
+  window.removeEventListener('pointerup', trackUp)
 })
 watch(() => props.src, () => load())
 </script>
 
 <template>
-  <div ref="wrap" class="pv" :class="`pv--${mode}`">
+  <div ref="wrap" class="pv" :class="[`pv--${mode}`, { 'pv--full': fullMode }]">
     <canvas v-if="mode === 'panorama'" ref="canvasEl" class="pv__canvas" />
     <img
       v-else-if="mode === 'photo'"
@@ -240,8 +331,24 @@ watch(() => props.src, () => load())
     <div v-if="mode === 'loading'" class="pv__hint">加载中…</div>
     <div v-else-if="mode === 'error'" class="pv__hint">图片加载失败</div>
 
-    <div v-if="mode === 'photo'" class="pv__badge">普通照片 · 拖动查看 / 滚轮缩放</div>
-    <div v-else-if="mode === 'panorama'" class="pv__badge">360° 全景 · 拖动环视 / 滚轮缩放</div>
+    <div v-if="mode === 'photo'" class="pv__badge">
+      {{ isFullscreen ? '普通照片 · 再次点击画面 / 按 Esc 退出全屏' : '普通照片 · 点击画面全屏 · 拖动查看 / 滚轮缩放' }}
+    </div>
+    <div v-else-if="mode === 'panorama'" class="pv__badge">
+      {{ isFullscreen ? '360° 全景 · 再次点击画面 / 按 Esc 退出全屏' : '360° 全景 · 点击画面全屏 · 拖动环视 / 滚轮缩放' }}
+    </div>
+
+    <button
+      type="button"
+      class="pv__fs"
+      :title="isFullscreen ? '退出全屏（Esc）' : '全屏查看实景（也可以直接点击画面）'"
+      :aria-label="isFullscreen ? '退出全屏' : '全屏查看'"
+      @click.stop="toggleFullscreen"
+      @pointerdown.stop
+    >
+      <span class="pv__fsIcon">{{ isFullscreen ? '✕' : '⛶' }}</span>
+      <span>{{ isFullscreen ? '退出全屏' : '全屏' }}</span>
+    </button>
 
     <div v-if="mode === 'photo'" class="pv__controls">
       <button type="button" @click="zoomPhotoBy(1.25)">＋</button>
@@ -296,6 +403,51 @@ watch(() => props.src, () => load())
   font-size: 12px;
   pointer-events: none;
 }
+
+/* 右上角全屏按钮 */
+.pv__fs {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background 0.15s ease;
+}
+.pv__fs:hover {
+  background: rgba(0, 0, 0, 0.78);
+}
+.pv__fsIcon {
+  font-size: 13px;
+}
+
+/* 全屏展示：铺满整屏（原生全屏与 CSS 兜底共用） */
+.pv--full {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+}
+.pv--full .pv__fs {
+  top: 18px;
+  right: 20px;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
 .pv__controls {
   position: absolute;
   right: 12px;

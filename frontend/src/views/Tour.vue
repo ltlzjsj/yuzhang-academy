@@ -106,7 +106,8 @@ const active = ref<Scene>(scenes[0])
   color: #fff;
 }
 .tour__stage {
-  height: min(64vh, 640px);
+  /* 内嵌展示尽量给足高度；想看到更大的实景可直接点击画面进入全屏 */
+  height: min(70vh, 720px);
   min-height: 420px;
   border-radius: 16px;
   overflow: hidden;
