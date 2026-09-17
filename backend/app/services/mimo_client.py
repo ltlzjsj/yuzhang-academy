@@ -113,7 +113,7 @@ class MiMoClient:
         top_p: float = 0.9,
         max_tokens: int | None = None,
         images: list[dict] | None = None,
-        think: bool | None = None,  # accepted for signature parity; unused
+        think: bool | None = None,  # False=关闭思考(实测首字快 4 倍), True=开启, None=服务端默认
     ) -> AsyncIterator[dict]:
         """Stream a MiMo completion.
 
@@ -139,6 +139,12 @@ class MiMoClient:
             "temperature": temperature,
             "top_p": top_p,
         }
+        # 思考开关：MiMo 默认会先跑一段推理（实测要 17 秒才开始出正文），
+        # think=False 时显式关闭，think=True 时显式打开，None 则沿用服务端默认。
+        if think is True:
+            payload["thinking"] = {"type": "enabled"}
+        elif think is False:
+            payload["thinking"] = {"type": "disabled"}
         if system:
             payload["system"] = system
 

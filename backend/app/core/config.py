@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     mimo_base_url: str = "https://api.xiaomimimo.com/anthropic"
     mimo_model: str = "mimo-v2.5"
     mimo_max_tokens: int = 2048
+    # 历史名人对话（/agent/stream）用的模型：该链路只传文字、不传图，
+    # 采用纯文本的 pro 模型首字延迟约 2~3 秒，而 v2.5（多模态）在同样提示词下要约 8~10 秒。
+    # 如需在人物对话里识图，把这里改回 mimo-v2.5。
+    agent_chat_model: str = "mimo-v2.5-pro"
 
     # MiMo 语音 (ASR/TTS v2.5) — OpenAI 风格端点, 与上面的 Messages API 路径不同。
     # 复用 mimo_api_key 鉴权 (header: api-key)。base 拼接 "/v1/chat/completions"。

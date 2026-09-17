@@ -124,7 +124,7 @@ async def agent_stream(
 
         try:
             async for delta in llm_chat_stream(
-                model=settings.default_chat_model,
+                model=settings.agent_chat_model or settings.default_chat_model,
                 messages=msgs,
                 temperature=temperature,
                 top_p=top_p,
