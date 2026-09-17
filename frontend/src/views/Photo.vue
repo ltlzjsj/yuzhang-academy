@@ -81,6 +81,8 @@ const costume = ref(false)
 const photo = ref('')
 const facePhoto = ref('')
 const result = ref('')
+// 生成成功后弹出全屏预览（点一下关闭）
+const previewOpen = ref(false)
 const busy = ref(false)
 const status = ref('')
 const geminiConfigured = ref(false)
@@ -316,6 +318,8 @@ async function generate() {
       academy: scene.value.academy,
     })
     failureCount.value = 0
+    // 生成成功：弹出全屏预览看效果（点一下即关闭）
+    previewOpen.value = true
   } catch (e: any) {
     progress.value = 0
     failureCount.value += 1
@@ -379,7 +383,15 @@ onMounted(async () => {
   }
 })
 
-onBeforeUnmount(stopCamera)
+function onPreviewKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && previewOpen.value) previewOpen.value = false
+}
+onMounted(() => window.addEventListener('keydown', onPreviewKey))
+
+onBeforeUnmount(() => {
+  stopCamera()
+  window.removeEventListener('keydown', onPreviewKey)
+})
 </script>
 
 <template>
@@ -556,6 +568,19 @@ onBeforeUnmount(stopCamera)
         </div>
       </div>
     </div>
+
+    <!-- 生成成功后的全屏预览：点击任意位置（或按 Esc）关闭 -->
+    <div
+      v-if="previewOpen && result"
+      class="ph__preview"
+      role="dialog"
+      aria-label="合影预览"
+      title="点击关闭"
+      @click="previewOpen = false"
+    >
+      <img :src="result" alt="生成完成的书院合影" />
+      <p class="ph__previewHint">点击任意位置关闭</p>
+    </div>
   </div>
 </template>
 
@@ -730,6 +755,40 @@ onBeforeUnmount(stopCamera)
 .ph__modalBox h2 { font-size: 20px; color: var(--ink); }
 .ph__modalBox p { margin: 10px 0 18px; color: var(--sub); }
 .ph__modalActions { display: flex; gap: 10px; justify-content: center; }
+
+/* 生成成功后的全屏预览：铺满屏幕展示合影，点一下即关闭 */
+.ph__preview {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 3vh 3vw;
+  background: rgba(6, 10, 14, 0.92);
+  backdrop-filter: blur(4px);
+  cursor: zoom-out;
+  animation: phPreviewIn 0.18s ease;
+}
+.ph__preview img {
+  max-width: 94vw;
+  max-height: 82vh;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+.ph__previewHint {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.74);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+@keyframes phPreviewIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 
 @media (max-width: 980px) {
   .ph__grid { grid-template-columns: 1fr; }
