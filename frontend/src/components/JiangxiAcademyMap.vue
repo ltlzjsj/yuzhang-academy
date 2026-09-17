@@ -74,11 +74,73 @@ function assetThumb(src: string, w = 120, h = 120) {
 }
 
 const el = ref<HTMLDivElement | null>(null)
+const rootEl = ref<HTMLDivElement | null>(null)
 const router = useRouter()
 let map: L.Map | null = null
 let geoLayer: L.GeoJSON | null = null
 let ro: ResizeObserver | null = null
 let openTip: L.Tooltip | null = null
+// 全屏展示：优先用浏览器全屏 API（同一个地图实例直接铺满，内容与缩放位置完全一致），
+// 不支持的浏览器退化成 CSS 覆盖层。两种情况下都用 .jmap--full 控制尺寸
+// ——浏览器的 :fullscreen 伪类在部分浏览器会被解析器丢掉，靠类名更稳。
+const isFullscreen = ref(false)
+const fullMode = ref(false)
+let nativeFsActive = false // 是否真的进了浏览器原生全屏（用于区分「请求被拒」与「用户按 Esc 退出」）
+
+function syncFullscreen() {
+  isFullscreen.value = fullMode.value
+  // 容器尺寸变了：等浏览器完成布局再让 Leaflet 重算
+  requestAnimationFrame(() => map?.invalidateSize())
+  window.setTimeout(() => map?.invalidateSize(), 260)
+}
+
+function onFullscreenChange() {
+  if (document.fullscreenElement) {
+    nativeFsActive = true
+    fullMode.value = true
+  } else if (nativeFsActive) {
+    // 只有「本来就在原生全屏、现在退出了」才关闭；请求被浏览器拒绝时不动兜底状态
+    nativeFsActive = false
+    fullMode.value = false
+  }
+  syncFullscreen()
+}
+
+async function toggleFullscreen() {
+  const root = rootEl.value
+  if (!root) return
+  if (fullMode.value && !document.fullscreenElement) {
+    fullMode.value = false
+    syncFullscreen()
+    return
+  }
+  if (document.fullscreenElement) {
+    await document.exitFullscreen().catch(() => {})
+    return
+  }
+  // 先加尺寸类，避免进入全屏的瞬间地图没铺满
+  fullMode.value = true
+  syncFullscreen()
+  const req: ((o?: any) => Promise<void>) | undefined =
+    root.requestFullscreen?.bind(root) || (root as any).webkitRequestFullscreen?.bind(root)
+  if (req) {
+    try {
+      await req({ navigationUI: 'hide' })
+      nativeFsActive = true
+      return
+    } catch {
+      /* 浏览器拒绝（例如不是用户手势触发）：落到 CSS 覆盖层 */
+      nativeFsActive = false
+    }
+  }
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && fullMode.value && !document.fullscreenElement) {
+    fullMode.value = false
+    syncFullscreen()
+  }
+}
 
 function clampTooltip(tip: L.Tooltip | null) {
   if (!tip || !map) return
@@ -224,7 +286,15 @@ async function init() {
 }
 
 onMounted(init)
+onMounted(() => {
+  document.addEventListener('fullscreenchange', onFullscreenChange)
+  document.addEventListener('webkitfullscreenchange', onFullscreenChange as EventListener)
+  window.addEventListener('keydown', onKeydown)
+})
 onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
+  document.removeEventListener('webkitfullscreenchange', onFullscreenChange as EventListener)
+  window.removeEventListener('keydown', onKeydown)
   ro?.disconnect()
   map?.remove()
   map = null
@@ -232,8 +302,26 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="jmap">
+  <div ref="rootEl" class="jmap" :class="{ 'jmap--full': fullMode }">
     <div ref="el" class="jmap__chart" />
+    <button
+      type="button"
+      class="jmap__fs"
+      :title="isFullscreen ? '退出全屏（Esc）' : '全屏查看书院分布图'"
+      :aria-label="isFullscreen ? '退出全屏' : '全屏查看地图'"
+      @click.stop="toggleFullscreen"
+      @mousedown.stop
+      @dblclick.stop
+    >
+      <svg v-if="!isFullscreen" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M4 9V4h5v2H6v3H4zm11-5h5v5h-2V6h-3V4zM4 15h2v3h3v2H4v-5zm14 0h2v5h-5v-2h3v-3z"
+        />
+      </svg>
+      <span v-else class="jmap__fsX" aria-hidden="true">✕</span>
+      <span>{{ isFullscreen ? '退出全屏' : '全屏' }}</span>
+    </button>
     <p class="jmap__hint">将鼠标移到城市上查看书院介绍 · 滚轮缩放、可拖拽</p>
   </div>
 </template>
@@ -253,6 +341,62 @@ onBeforeUnmount(() => {
   text-align: center;
   color: var(--muted);
   font-size: 12.5px;
+}
+
+/* 右上角「全屏」按钮（浮在地图之上，避开 Leaflet 控件层） */
+.jmap__fs {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1200;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(184, 138, 74, 0.55);
+  background: rgba(255, 255, 255, 0.93);
+  color: #8a5a2b;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 3px 10px rgba(31, 42, 54, 0.18);
+  backdrop-filter: blur(6px);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.jmap__fs:hover {
+  background: #fff;
+  transform: translateY(-1px);
+}
+.jmap__fs:active {
+  transform: translateY(0);
+}
+.jmap__fsX {
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* 全屏展示（浏览器全屏与 CSS 兜底共用这套类名）：
+   同一个地图实例直接铺满整屏，中心点与缩放保持不变 */
+.jmap--full {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  width: 100vw;
+  height: 100vh;
+  padding: 0;
+  background: #0d1117;
+}
+.jmap--full .jmap__chart {
+  height: 100%;
+}
+.jmap--full .jmap__hint {
+  display: none;
+}
+.jmap--full .jmap__fs {
+  top: 18px;
+  right: 20px;
 }
 
 /* 悬停富文本：允许换行 */
