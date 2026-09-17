@@ -111,6 +111,9 @@ const fullMode = ref(false)
 let nativeFsActive = false // 是否真的进了浏览器原生全屏（用于区分「请求被拒」与「用户按 Esc 退出」）
 // 进全屏前的视角：退出全屏时原样恢复，避免小地图停在全屏时的特写状态
 let preFullView: { lat: number; lng: number; zoom: number } | null = null
+// 进出全屏的过渡期：这段时间内不要跑"自动贴合"逻辑（容器尺寸还会变，
+// 否则会把最小缩放抬高、把小地图顶到特写档位）
+let fsTransitionUntil = 0
 
 function rememberView() {
   if (!map) return
@@ -122,12 +125,19 @@ function restoreView() {
   const v = preFullView
   preFullView = null
   if (!map || !v) return
-  // 等容器尺寸恢复后再套用原视角
-  requestAnimationFrame(() => {
+  // 退出全屏时容器尺寸会经历一段过渡，这里多次套用，确保最终停回原视角
+  const apply = () => {
     map?.invalidateSize()
     map?.setView([v.lat, v.lng], v.zoom, { animate: false })
-    window.setTimeout(() => map?.invalidateSize(), 260)
-  })
+  }
+  fsTransitionUntil = Date.now() + 800
+  requestAnimationFrame(apply)
+  window.setTimeout(apply, 160)
+  window.setTimeout(apply, 420)
+  window.setTimeout(() => {
+    apply()
+    fsTransitionUntil = 0
+  }, 800)
 }
 
 function syncFullscreen() {
@@ -165,6 +175,8 @@ async function toggleFullscreen() {
   }
   // 先加尺寸类，避免进入全屏的瞬间地图没铺满
   rememberView()
+  // 过渡期内不跑"自动贴合"，全屏只换窗口大小，视角保持不变
+  fsTransitionUntil = Date.now() + 900
   fullMode.value = true
   syncFullscreen()
   const req: ((o?: any) => Promise<void>) | undefined =
@@ -320,6 +332,9 @@ async function init() {
 
   ro = new ResizeObserver(() => {
     map?.invalidateSize()
+    // 全屏期间与进出过渡期都不跑"自动贴合"：
+    // 全屏只是把窗口变大（同一缩放看到更多范围），这样退出后小地图不会被顶成特写。
+    if (fullMode.value || Date.now() < fsTransitionUntil) return
     const z = applyJiangxiLimits()
     if (z !== undefined && map && map.getZoom() < z) map.setZoom(z)
   })
