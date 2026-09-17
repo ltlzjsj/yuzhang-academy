@@ -21,6 +21,8 @@ export function useAlignedSpeech(applyViseme?: (weights: Record<string, number> 
   let raf = 0
   let timeline: VisemeFrame[] = []
   let stopped = false
+  // 逐句播报用：正在播放时再来的句子排队，播完自动接着播
+  const queue: string[] = []
 
   function base64ToBlob(b64: string, mime: string): Blob {
     const bin = atob(b64)
@@ -41,9 +43,27 @@ export function useAlignedSpeech(applyViseme?: (weights: Record<string, number> 
     raf = requestAnimationFrame(loop)
   }
 
+  /** 整段朗读：打断当前播放并清空队列（回答首播、手动点「朗读」用）。 */
   async function speak(text: string, opts?: { voiceDesc?: string }) {
-    if (!text.trim()) return
+    const t = (text || '').trim()
+    if (!t) return
     stop()
+    await playOne(t, opts)
+  }
+
+  /** 逐句流式播报：正在播就排队，播完自动接着播下一句。 */
+  function enqueue(text: string, opts?: { voiceDesc?: string }) {
+    const t = (text || '').trim()
+    if (!t) return
+    if (speaking.value || loading.value) {
+      queue.push(t)
+      return
+    }
+    void playOne(t, opts)
+  }
+
+  async function playOne(text: string, opts?: { voiceDesc?: string }) {
+    if (!text.trim()) return
     stopped = false
     loading.value = true
     speaking.value = true
@@ -72,12 +92,15 @@ export function useAlignedSpeech(applyViseme?: (weights: Record<string, number> 
         speaking.value = false
         loading.value = false
         clearViseme()
+        const next = queue.shift()
+        if (next) void playOne(next)
       }
       audio.onerror = () => {
         error.value = '语音播放失败'
         speaking.value = false
         loading.value = false
         clearViseme()
+        queue.length = 0
       }
       await audio.play()
       loading.value = false
@@ -91,6 +114,7 @@ export function useAlignedSpeech(applyViseme?: (weights: Record<string, number> 
 
   function stop() {
     stopped = true
+    queue.length = 0
     if (raf) cancelAnimationFrame(raf)
     raf = 0
     clearViseme()
@@ -109,5 +133,5 @@ export function useAlignedSpeech(applyViseme?: (weights: Record<string, number> 
 
   onBeforeUnmount(stop)
 
-  return { speaking, loading, error, speak, stop }
+  return { speaking, loading, error, speak, enqueue, stop }
 }

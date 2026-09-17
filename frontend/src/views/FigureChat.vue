@@ -126,6 +126,117 @@ const revealing = ref(false)
 // 讲完之后收起字幕的定时器
 let subtitleClearTimer: number | undefined
 
+// ---- 逐句流式播报：LLM 吐出一句就立刻合成并驱动数字人，不必等全文 ----
+const SPEAK_MIN_CHARS = 8 // 太短的片段（“好，”）并入下一句一起播，避免碎句
+const speakQueue: string[] = []
+const revealItems: { text: string; duration: number }[] = []
+let audioPumpRunning = false
+let revealPumpRunning = false
+let rawBuf = '' // 已收到但尚未成句的残余文本
+let spokenPrefix = '' // 已经念完、字幕已完整显示的部分
+
+/** 从缓冲区切出已完整的句子（保留句末标点），返回句子列表与残余。 */
+function takeSentences(buf: string): { sentences: string[]; rest: string } {
+  const sentences: string[] = []
+  let start = 0
+  for (let i = 0; i < buf.length; i++) {
+    const ch = buf[i]
+    if (!('。！？!?；;'.includes(ch) || ch === '\n')) continue
+    const s = buf.slice(start, i + 1).trim()
+    if (!s) {
+      start = i + 1
+      continue
+    }
+    // 过短的片段不单独成一“句”，留在缓冲里与下一段合并
+    if (s.length < SPEAK_MIN_CHARS) continue
+    sentences.push(s)
+    start = i + 1
+  }
+  return { sentences, rest: buf.slice(start) }
+}
+
+/** 把流式增量喂进句子队列，凑成一句就推给数字人。 */
+function feedAnswerDelta(text: string) {
+  rawBuf += text
+  const { sentences, rest } = takeSentences(rawBuf)
+  rawBuf = rest
+  for (const s of sentences) if (s) speakQueue.push(s)
+  void pumpAudio()
+}
+
+/**
+ * 音频管线：句子一到就立刻合成并推给数字人（不等上一句播完），
+ * 这样 LiveTalking 的音频队列里始终有下一句，句与句之间不会出现空档。
+ */
+async function pumpAudio() {
+  if (audioPumpRunning) return
+  audioPumpRunning = true
+  try {
+    while (speakQueue.length) {
+      const sentence = speakQueue.shift()!
+      let duration = 0
+      if (useLiveTalking.value) {
+        duration = Number(await Promise.resolve(liveTalkingRef.value?.speak(sentence))) || 0
+      } else if (useXmov.value) {
+        xmovRef.value?.speak(sentence)
+      } else {
+        aligned.enqueue(sentence, { voiceDesc: fig.value?.voice_desc || undefined })
+      }
+      if (!useLiveTalking.value) portraitPreparing.value = false
+      revealItems.push({ text: sentence, duration })
+      void pumpReveal()
+    }
+  } finally {
+    audioPumpRunning = false
+  }
+}
+
+/** 字幕管线：LiveTalking 路径按每句语音时长逐字浮现；其他链路字幕随流式文本显示。 */
+async function pumpReveal() {
+  if (revealPumpRunning) return
+  revealPumpRunning = true
+  try {
+    while (revealItems.length) {
+      const item = revealItems.shift()!
+      if (useLiveTalking.value) await revealAppend(item.text, item.duration)
+    }
+  } finally {
+    revealPumpRunning = false
+  }
+}
+/** 逐句浮现字幕：把这一句按语音时长铺开，接在已念完的部分后面。 */
+function revealAppend(text: string, durationSec: number): Promise<void> {
+  return new Promise((resolve) => {
+    const chars = Array.from(text)
+    if (!chars.length) {
+      resolve()
+      return
+    }
+    const base = spokenPrefix
+    const leadMs = 150
+    const speechMs = durationSec > 0 ? durationSec * 1000 : chars.length * 180
+    const start = performance.now()
+    portraitPreparing.value = false
+    revealing.value = true
+    const tick = () => {
+      const elapsed = performance.now() - start
+      const ratio = Math.min(1, Math.max(0, (elapsed - leadMs) / Math.max(1, speechMs)))
+      const shown = Math.max(1, Math.round(chars.length * ratio))
+      latestAnswer.value = base + chars.slice(0, shown).join('')
+      if (ratio < 1) {
+        revealRaf = requestAnimationFrame(tick)
+      } else {
+        revealRaf = 0
+        revealing.value = false
+        spokenPrefix = base + text
+        latestAnswer.value = spokenPrefix
+        resolve()
+      }
+    }
+    revealRaf = requestAnimationFrame(tick)
+  })
+}
+
 function cancelSubtitleClear() {
   if (subtitleClearTimer !== undefined) {
     clearTimeout(subtitleClearTimer)
@@ -244,6 +355,10 @@ function trimHistory() {
 function stop() {
   stopReveal()
   cancelSubtitleClear()
+  speakQueue.length = 0
+  rawBuf = ''
+  revealItems.length = 0
+  revealing.value = false
   if (abort) {
     abort.abort()
     abort = null
@@ -297,6 +412,11 @@ function submit() {
   portraitPreparing.value = false
   latestSources.value = 0
   streaming.value = true
+  // 重置逐句播报状态
+  speakQueue.length = 0
+  rawBuf = ''
+  spokenPrefix = ''
+  revealItems.length = 0
 
   const outgoing: HiddenMessage[] = [...hiddenHistory.value, { role: 'user', content }]
   let finalAnswer = ''
@@ -329,38 +449,54 @@ function submit() {
           latestSources.value = (data.items ?? []).length
         } else if (event === 'delta') {
           const text = data.content ?? ''
-          // 数字人（画像开口 / LiveTalking 实时口型）都先攒着不显示，
-          // 等口型准备好再一起显示回答。
-          if (useTalkingPortrait.value || useLiveTalking.value) pendingPortraitAnswer.value += text
-          else latestAnswer.value += text
           finalAnswer += text
-          // 音素驱动需要完整文本做对齐，这里不再流式 feed，done 时统一播报
+          if (useTalkingPortrait.value) {
+            // 画像开口说话要整段渲染视频，先攒文本，done 时统一处理
+            pendingPortraitAnswer.value += text
+          } else if (useLiveTalking.value) {
+            // 实时数字人：攒文本用于兜底，同时逐句推给它播报
+            pendingPortraitAnswer.value += text
+            if (VOICE_ENABLED && autoRead.value) {
+              portraitPreparing.value = true
+              feedAnswerDelta(text)
+            }
+          } else {
+            latestAnswer.value += text
+            if (VOICE_ENABLED && autoRead.value) feedAnswerDelta(text)
+          }
         } else if (event === 'error') {
           error.value = data.message || '先生暂时无言，请稍后再问。'
         } else if (event === 'done') {
           streaming.value = false
           abort = null
           if (finalAnswer.trim()) {
-            if (useTalkingPortrait.value || useLiveTalking.value) {
+            const tail = rawBuf.trim()
+            rawBuf = ''
+            // 逐句流式：句子已在生成过程中边出边播，这里只补最后一句没有句号的残余
+            const streamingVoice = VOICE_ENABLED && autoRead.value && !useTalkingPortrait.value
+            if (streamingVoice) {
+              if (tail) speakQueue.push(tail)
+              void pumpAudio()
+              if (useLiveTalking.value) {
+                // 兜底：万一没能播出（例如会话未就绪），直接把全文显示出来
+                window.setTimeout(() => {
+                  if (!latestAnswer.value && !audioPumpRunning && !speakQueue.length) {
+                    latestAnswer.value = finalAnswer.trim()
+                    portraitPreparing.value = false
+                  }
+                }, 1500)
+              }
+            } else if (useTalkingPortrait.value) {
+              // 画像开口说话：整段生成视频后播放
               pendingPortraitAnswer.value = finalAnswer.trim()
               if (VOICE_ENABLED && autoRead.value) {
                 portraitPreparing.value = true
-                if (useLiveTalking.value) {
-                  // 等 TTS 合成并交给 LiveTalking，再跟着说话速度逐字显示回答
-                  Promise.resolve(liveTalkingRef.value?.speak(finalAnswer))
-                    .then((duration) =>
-                      revealBySpeech(pendingPortraitAnswer.value || finalAnswer, Number(duration) || 0),
-                    )
-                    .catch(() => onPortraitReady())
-                } else {
-                  talkingPortraitRef.value?.speak(finalAnswer)
-                }
+                talkingPortraitRef.value?.speak(finalAnswer)
               } else {
                 latestAnswer.value = finalAnswer.trim()
               }
-            } else if (VOICE_ENABLED && autoRead.value) {
-              if (useXmov.value) xmovRef.value?.speak(finalAnswer)
-              else aligned.speak(finalAnswer, { voiceDesc: fig.value?.voice_desc || undefined })
+            } else {
+              latestAnswer.value = finalAnswer.trim()
             }
             hiddenHistory.value = [...outgoing, { role: 'assistant', content: finalAnswer.trim() }]
             trimHistory()
