@@ -90,8 +90,12 @@ const LIVE_TALKING_AVATARS: Record<string, { avatar: string; idle?: string; zoom
 }
 const liveTalkingAvatar = computed(() => LIVE_TALKING_AVATARS[fig.value?.id ?? ''] ?? null)
 const useLiveTalking = computed(() => !!liveTalkingAvatar.value)
-// 画像开口说话：朱熹、吕祖谦（用立绘生成说话视频）。
-const useTalkingPortrait = computed(() => ['zhuxi', 'lvzuqian'].includes(fig.value?.id ?? ''))
+// 画像开口说话（离线渲染成视频的旧路径）：朱熹、吕祖谦曾经用它。
+// 现在这两位也已接入 LiveTalking 实时数字人，所以只有在没接 LiveTalking 时才回退到这条路径
+// ——否则下面的分支会先命中旧路径，导致答完后不驱动数字人、字幕一直停在「正在思量」。
+const useTalkingPortrait = computed(
+  () => ['zhuxi', 'lvzuqian'].includes(fig.value?.id ?? '') && !useLiveTalking.value,
+)
 const isSpeaking = computed(() => (useXmov.value ? speech.speaking.value : aligned.speaking.value))
 
 // 自研数字人的音素驱动语音：播放时把口型权重喂给 DigitalHuman3D
