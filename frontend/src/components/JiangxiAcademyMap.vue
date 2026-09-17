@@ -109,6 +109,26 @@ function onMapKeydown(e: KeyboardEvent) {
 const isFullscreen = ref(false)
 const fullMode = ref(false)
 let nativeFsActive = false // 是否真的进了浏览器原生全屏（用于区分「请求被拒」与「用户按 Esc 退出」）
+// 进全屏前的视角：退出全屏时原样恢复，避免小地图停在全屏时的特写状态
+let preFullView: { lat: number; lng: number; zoom: number } | null = null
+
+function rememberView() {
+  if (!map) return
+  const c = map.getCenter()
+  preFullView = { lat: c.lat, lng: c.lng, zoom: map.getZoom() }
+}
+
+function restoreView() {
+  const v = preFullView
+  preFullView = null
+  if (!map || !v) return
+  // 等容器尺寸恢复后再套用原视角
+  requestAnimationFrame(() => {
+    map?.invalidateSize()
+    map?.setView([v.lat, v.lng], v.zoom, { animate: false })
+    window.setTimeout(() => map?.invalidateSize(), 260)
+  })
+}
 
 function syncFullscreen() {
   isFullscreen.value = fullMode.value
@@ -125,6 +145,7 @@ function onFullscreenChange() {
     // 只有「本来就在原生全屏、现在退出了」才关闭；请求被浏览器拒绝时不动兜底状态
     nativeFsActive = false
     fullMode.value = false
+    restoreView()
   }
   syncFullscreen()
 }
@@ -135,6 +156,7 @@ async function toggleFullscreen() {
   if (fullMode.value && !document.fullscreenElement) {
     fullMode.value = false
     syncFullscreen()
+    restoreView()
     return
   }
   if (document.fullscreenElement) {
@@ -142,6 +164,7 @@ async function toggleFullscreen() {
     return
   }
   // 先加尺寸类，避免进入全屏的瞬间地图没铺满
+  rememberView()
   fullMode.value = true
   syncFullscreen()
   const req: ((o?: any) => Promise<void>) | undefined =
@@ -162,6 +185,7 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && fullMode.value && !document.fullscreenElement) {
     fullMode.value = false
     syncFullscreen()
+    restoreView()
   }
 }
 
