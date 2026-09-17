@@ -245,6 +245,8 @@ async function init() {
     minZoom: 4,
     zoomControl: false,
     scrollWheelZoom: true,
+    // 不显示右下角的署名条（Leaflet / Esri 版权信息）
+    attributionControl: false,
   })
 
   const attribution =
