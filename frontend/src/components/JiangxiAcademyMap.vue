@@ -74,11 +74,38 @@ function assetThumb(src: string, w = 120, h = 120) {
   return '/api/v1/assets/thumb/academy/' + src.split('/').map(encodeURIComponent).join('/') + `?w=${w}&h=${h}`
 }
 
+// 各书院在地图上的点位坐标 [经度, 纬度]。
+// 按书院实际所在位置（县城/城区或遗址所在地）取的近似点，用于地图小图标定位；
+// 名称必须与 CITY_ACADEMIES 中的书院名一致，否则不会落点。
+const ACADEMY_COORDS: Record<string, [number, number]> = {
+  豫章书院: [115.8843, 28.6795], // 南昌 · 东湖区
+  东湖书院: [115.8951, 28.6768], // 南昌 · 东湖之滨
+  友教书院: [115.879, 28.6712], // 南昌 · 老城区
+  长芗书院: [117.238, 29.303], // 景德镇 · 浮梁旧治
+  鳌洲书院: [113.85, 27.618], // 萍乡 · 城区鳌洲
+  白鹿洞书院: [116.0097, 29.5278], // 九江 · 庐山五老峰南麓
+  蒙山书院: [114.85, 27.94], // 新余 · 蒙山
+  瀛洲书院: [114.93, 27.81], // 新余 · 城南虎瞰山
+  象山书院: [117.242, 28.293], // 鹰潭 · 贵溪
+  阳明书院: [114.936, 25.856], // 赣州 · 郁孤台下
+  潋江书院: [115.363, 26.338], // 赣州 · 兴国县城
+  白鹭洲书院: [114.9958, 27.1066], // 吉安 · 赣江白鹭洲
+  龙江书院: [113.942, 26.723], // 吉安 · 井冈山龙市镇
+  华林书院: [115.36, 28.69], // 宜春 · 奉新华林山
+  昌黎书院: [114.38, 27.8], // 宜春 · 袁州
+  兴鲁书院: [116.36, 27.95], // 抚州 · 临川
+  盱江书院: [116.64, 27.57], // 抚州 · 南城
+  鹅湖书院: [117.84, 28.2167], // 上饶 · 铅山鹅湖山
+  信江书院: [117.97, 28.448], // 上饶 · 信江之畔
+  叠山书院: [117.443, 28.379], // 上饶 · 弋阳
+}
+
 const el = ref<HTMLDivElement | null>(null)
 const rootEl = ref<HTMLDivElement | null>(null)
 const router = useRouter()
 let map: L.Map | null = null
 let geoLayer: L.GeoJSON | null = null
+let pinLayer: L.LayerGroup | null = null
 let ro: ResizeObserver | null = null
 let openTip: L.Tooltip | null = null
 let cityClickAt = 0 // 记录城市点击时刻，防止随后的 map click 立刻把面板关掉
@@ -98,6 +125,18 @@ function openAcademy(name: string) {
   closePanel()
   if (id) router.push(`/academies/${id}`)
   else router.push({ path: '/academies', query: city ? { city } : {} })
+}
+
+// 点地图上的书院图标：有详情页直接进详情页，没有详情页的展开该市书院面板
+function openAcademyPoint(name: string, city: string) {
+  const id = ACADEMY_ID[name]
+  if (id) {
+    closePanel()
+    router.push(`/academies/${id}`)
+    return
+  }
+  cityClickAt = Date.now()
+  panelCity.value = city
 }
 
 function onMapKeydown(e: KeyboardEvent) {
@@ -233,6 +272,30 @@ function tooltipHtml(name: string): string {
   return `<div class="jmap__tip"><b>${name}</b><span>${tail}</span></div>`
 }
 
+/**
+ * 书院小图标：铜金色水滴形地标 + 白色印章圈 + 一个"書"字，
+ * 与地图金棕配色一致；图标小、不抢底图，悬浮时放大并显示书院名。
+ */
+function academyPin() {
+  return L.divIcon({
+    className: 'jmap__pinWrap',
+    html:
+      '<svg class="jmap__pinSvg" viewBox="0 0 24 30" width="22" height="27" aria-hidden="true">' +
+      '<path class="jmap__pinBody" d="M12 .9C5.9.9 1 5.8 1 11.9c0 7.6 9.2 15.8 10.4 16.9a.9.9 0 0 0 1.2 0C13.8 27.7 23 19.5 23 11.9 23 5.8 18.1.9 12 .9z"/>' +
+      '<circle class="jmap__pinHalo" cx="12" cy="11.9" r="6.6"/>' +
+      '<text class="jmap__pinGlyph" x="12" y="14.7">書</text>' +
+      '</svg>',
+    iconSize: [22, 27],
+    iconAnchor: [11, 26.5],
+    tooltipAnchor: [0, -24],
+  })
+}
+
+function pinTooltipHtml(name: string, city: string): string {
+  const tail = ACADEMY_ID[name] ? '点击查看详情' : '点击查看该市书院'
+  return `<div class="jmap__tip"><b>${name}</b><span>${city} · ${tail}</span></div>`
+}
+
 async function init() {
   if (!el.value) return
   const resp = await fetch('/maps/jiangxi.json')
@@ -313,6 +376,39 @@ async function init() {
       .addTo(map)
   }
 
+  // 各书院点位小图标：悬浮放大+报书院名，点击进详情（无详情页则展开该市面板）
+  pinLayer = L.layerGroup().addTo(map)
+  for (const [city, list] of Object.entries(CITY_ACADEMIES)) {
+    for (const a of list) {
+      const c = ACADEMY_COORDS[a.name]
+      if (!c) continue
+      const marker = L.marker([c[1], c[0]], {
+        icon: academyPin(),
+        riseOnHover: true,
+      })
+      marker.on('add', () => {
+        const g = marker.getElement()
+        if (!g) return
+        g.setAttribute('role', 'button')
+        g.setAttribute('aria-label', `${a.name}（${city}）`)
+      })
+      marker.bindTooltip(pinTooltipHtml(a.name, city), {
+        className: 'jmap__tipbox jmap__tipbox--pin',
+        direction: 'top',
+        offset: [0, -2],
+        opacity: 1,
+      })
+      marker.on('mouseover', () => marker.getElement()?.classList.add('is-hot'))
+      marker.on('mouseout', () => marker.getElement()?.classList.remove('is-hot'))
+      marker.on('click', (ev: L.LeafletMouseEvent) => {
+        L.DomEvent.stop(ev)
+        cityClickAt = Date.now()
+        openAcademyPoint(a.name, city)
+      })
+      marker.addTo(pinLayer)
+    }
+  }
+
   map.on('tooltipopen', (e: any) => {
     const tip = e.tooltip as L.Tooltip
     if (tip.options.className === 'jmap__tipbox') {
@@ -357,6 +453,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('keydown', onMapKeydown)
   ro?.disconnect()
+  pinLayer = null
   map?.remove()
   map = null
 })
@@ -419,7 +516,7 @@ onBeforeUnmount(() => {
         查看 {{ panelCity }} 全部书院 →
       </RouterLink>
     </aside>
-    <p class="jmap__hint">点击城市查看该市书院 · 滚轮缩放、可拖拽</p>
+    <p class="jmap__hint">点击地图上的书院图标看详情 · 点击城市看该市书院 · 滚轮缩放、可拖拽</p>
   </div>
 </template>
 
@@ -522,6 +619,55 @@ onBeforeUnmount(() => {
 :deep(.jmap__tip span) {
   color: #8a5a2b;
   font-size: 11.5px;
+}
+
+/* 书院点位小图标：铜金水滴 + 印章圈 + "書"字，悬浮放大 */
+:deep(.jmap__pinWrap) {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+:deep(.jmap__pinSvg) {
+  display: block;
+  overflow: visible;
+  transform-origin: 50% 92%;
+  transition: transform 0.14s ease;
+  filter: drop-shadow(0 2px 3px rgba(20, 30, 40, 0.45));
+}
+:deep(.jmap__pinBody) {
+  fill: #b8823a;
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 1.1;
+}
+:deep(.jmap__pinHalo) {
+  fill: rgba(255, 253, 247, 0.95);
+}
+:deep(.jmap__pinGlyph) {
+  fill: #8a5a2b;
+  font-size: 8.6px;
+  font-weight: 700;
+  text-anchor: middle;
+  font-family: inherit;
+  pointer-events: none;
+}
+:deep(.jmap__pinWrap:hover .jmap__pinSvg),
+:deep(.jmap__pinWrap.is-hot .jmap__pinSvg) {
+  transform: scale(1.3);
+}
+:deep(.jmap__pinWrap:hover .jmap__pinBody),
+:deep(.jmap__pinWrap.is-hot .jmap__pinBody) {
+  fill: #d99a2b;
+}
+:deep(.jmap__pinWrap:focus) {
+  outline: none;
+}
+:deep(.jmap__pinWrap:focus-visible .jmap__pinSvg) {
+  transform: scale(1.3);
+}
+
+/* 点位提示比城市提示更窄一点，避免长出地图 */
+:deep(.leaflet-tooltip.jmap__tipbox--pin) {
+  max-width: 220px;
 }
 
 /* 点击城市后展开的书院面板：停靠在地图内，由用户显式关闭 */
