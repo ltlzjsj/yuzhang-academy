@@ -16,6 +16,9 @@ dist/
 *.log
 *.tsbuildinfo
 
+# 本地运行状态（启动脚本写入的 PID 文件）
+.run/
+
 # Generated outputs
 output/
 mineru_out/

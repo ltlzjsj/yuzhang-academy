@@ -1,0 +1,195 @@
+From 78ca2122be502bbc11a33a0fcadf15537117f838 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Thu, 17 Sep 2026 15:34:41 +0800
+Subject: [PATCH 1/2] =?UTF-8?q?=E6=9C=AC=E5=9C=B0=E6=94=B9=E9=80=A0?=
+ =?UTF-8?q?=EF=BC=9A=E5=BE=85=E6=9C=BA=E7=94=BB=E9=9D=A2=E5=8F=AA=E6=AD=A3?=
+ =?UTF-8?q?=E6=94=BE=E5=BE=AA=E7=8E=AF=20+=20=E8=87=AA=E5=AE=9A=E4=B9=89?=
+ =?UTF-8?q?=E5=8A=A8=E4=BD=9C=E9=85=8D=E7=BD=AE=EF=BC=9B=E6=9D=83=E9=87=8D?=
+ =?UTF-8?q?=E6=96=87=E4=BB=B6=E5=8A=A0=E5=85=A5=E5=BF=BD=E7=95=A5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .gitignore                |  3 +++
+ app.py                    | 21 +++++++++++++++++++--
+ avatars/base_avatar.py    |  7 +++++--
+ avatars/wav2lip_avatar.py | 14 ++++++++++++++
+ config.yaml               |  3 ++-
+ custom_jiangwanli.json    |  6 ++++++
+ custom_luocongyan.json    |  6 ++++++
+ server/routes.py          | 15 +++++++++++++++
+ 8 files changed, 70 insertions(+), 5 deletions(-)
+ create mode 100644 custom_jiangwanli.json
+ create mode 100644 custom_luocongyan.json
+
+diff --git a/.gitignore b/.gitignore
+index 2a83f0a..765bb3f 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -19,3 +19,6 @@ workspace/log_ngp.txt
+ models/
+ *.log
+ dist
++
++# 本地权重文件不入库（如 wav2lip 人脸检测 s3fd.pth）
++*.pth
+diff --git a/app.py b/app.py
+index 7e076c2..58b7955 100644
+--- a/app.py
++++ b/app.py
+@@ -103,7 +103,24 @@ async def offer(request):
+     return await rtc_manager.handle_offer(request)
+ 
+ async def whep(request):
+-    return await rtc_manager.handle_whep(request)
++    response = await rtc_manager.handle_whep(request)
++    response.headers["Access-Control-Allow-Origin"] = "*"
++    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
++    response.headers["Access-Control-Allow-Headers"] = "*"
++    response.headers["Access-Control-Expose-Headers"] = "X-Session-ID"
++    return response
++
++
++async def whep_options(request):
++    return web.Response(
++        status=200,
++        headers={
++            "Access-Control-Allow-Origin": "*",
++            "Access-Control-Allow-Methods": "POST, OPTIONS",
++            "Access-Control-Allow-Headers": "*",
++            "Access-Control-Max-Age": "86400",
++        },
++    )
+ 
+ async def on_shutdown(app):
+     await rtc_manager.shutdown()
+@@ -198,7 +215,7 @@ def main():
+     # /whep 注册在 CORS 之后：自行管理 OPTIONS，避免与 aiohttp_cors 冲突
+     whep_resource = appasync.router.add_resource('/whep')
+     whep_resource.add_route('POST', whep)
+-    whep_resource.add_route('OPTIONS', lambda _: web.Response(status=200))
++    whep_resource.add_route('OPTIONS', whep_options)
+ 
+     logger.info('start http server; http://<serverip>:'+str(opt.listenport))
+     # logger.info('如果使用webrtc，推荐访问webrtc集成前端: http://<serverip>:'+str(opt.listenport)+'/dashboard.html')
+diff --git a/avatars/base_avatar.py b/avatars/base_avatar.py
+index 28c826a..b2e4b3c 100644
+--- a/avatars/base_avatar.py
++++ b/avatars/base_avatar.py
+@@ -410,8 +410,11 @@ class BaseAvatar:
+                 self.speaking = False
+                 audiotype = audio_frames[0].type
+                 if self.custom_index.get(audiotype) is not None: #有自定义视频
+-                    mirindex = mirror_index(len(self.custom_img_cycle[audiotype]),self.custom_index[audiotype])
+-                    target_frame = self.custom_img_cycle[audiotype][mirindex]
++                    # 待机（静音）画面改为「只正放」循环：原实现用 mirror_index 正放一遍再倒放
++                    # 一遍，视觉上刚播过的动作会反向重演，看起来像重复。
++                    cycle_frames = self.custom_img_cycle[audiotype]
++                    mirindex = self.custom_index[audiotype] % len(cycle_frames)
++                    target_frame = cycle_frames[mirindex]
+                     self.custom_index[audiotype] += 1
+                 else:
+                     target_frame = self.frame_list_cycle[idx]
+diff --git a/avatars/wav2lip_avatar.py b/avatars/wav2lip_avatar.py
+index e69c72e..2bb44cb 100644
+--- a/avatars/wav2lip_avatar.py
++++ b/avatars/wav2lip_avatar.py
+@@ -138,11 +138,25 @@ class LipReal(BaseAvatar):
+         pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
+         return pred
+ 
++    def _sharpen_lower_face(self, face_img: np.ndarray) -> np.ndarray:
++        """wav2lip 重绘的下半张脸天生偏软（胡须、轮廓被抹平）。
++
++        只对下半部分做一次轻微反锐化，让贴回后的嘴部与原始画面更接近；
++        上半张脸（眼睛、额纹）保持原样，避免出现锐化噪点。
++        """
++        h = face_img.shape[0]
++        split = h // 2
++        top, low = face_img[:split], face_img[split:]
++        blur = cv2.GaussianBlur(low, (0, 0), 1.0)
++        low = cv2.addWeighted(low, 1.5, blur, -0.5, 0)
++        return np.vstack([top, low])
++
+     def paste_back_frame(self,pred_frame,idx:int):
+         bbox = self.coord_list_cycle[idx]
+         combine_frame = self.frame_list_cycle[idx].copy()
+         y1, y2, x1, x2 = bbox
+         res_frame = cv2.resize(pred_frame.astype(np.uint8),(x2-x1,y2-y1))
++        res_frame = self._sharpen_lower_face(res_frame)
+         combine_frame[y1:y2, x1:x2] = res_frame
+         return combine_frame
+ 
+diff --git a/config.yaml b/config.yaml
+index 5c3e139..4f3ae54 100644
+--- a/config.yaml
++++ b/config.yaml
+@@ -30,5 +30,6 @@ llm_model: ''                  # model override, empty = provider default (qwen-
+ transport: webrtc              # rtcpush / webrtc / rtmp / virtualcam
+ stun: 'stun:stun.freeswitch.org:3478'  # stun server URL
+ push_url: ''                   # push URL for rtcpush/rtmp (not needed for webrtc/virtualcam)
+-max_session: 5                 # max concurrent sessions
++max_session: 20                 # max concurrent sessions
+ listenport: 8010
++
+diff --git a/custom_jiangwanli.json b/custom_jiangwanli.json
+new file mode 100644
+index 0000000..718d899
+--- /dev/null
++++ b/custom_jiangwanli.json
+@@ -0,0 +1,6 @@
++[
++  {
++    "audiotype": 1,
++    "imgpath": "./data/custom/jiangwanli_idle"
++  }
++]
+diff --git a/custom_luocongyan.json b/custom_luocongyan.json
+new file mode 100644
+index 0000000..be94b32
+--- /dev/null
++++ b/custom_luocongyan.json
+@@ -0,0 +1,6 @@
++[
++  {
++    "audiotype": 1,
++    "imgpath": "./data/custom/luocongyan_idle"
++  }
++]
+diff --git a/server/routes.py b/server/routes.py
+index 8037d06..80c76d2 100644
+--- a/server/routes.py
++++ b/server/routes.py
+@@ -122,6 +122,20 @@ async def set_audiotype(request):
+         return json_error(str(e))
+ 
+ 
++async def close_session(request):
++    """客户端主动释放会话（离开页面时调用），避免连接异常断开后会话残留占满上限。"""
++    try:
++        params = await request.json()
++        sessionid = params.get('sessionid', '')
++        if sessionid:
++            session_manager.remove_session(sessionid)
++            logger.info('Session closed by client: %s', sessionid)
++        return json_ok()
++    except Exception as e:
++        logger.exception('close_session exception:')
++        return json_error(str(e))
++
++
+ async def record(request):
+     """录制控制"""
+     try:
+@@ -247,6 +261,7 @@ def setup_routes(app):
+     app.router.add_post("/human", human)
+     app.router.add_post("/humanaudio", humanaudio)
+     app.router.add_post("/set_audiotype", set_audiotype)
++    app.router.add_post("/api/session/close", close_session)
+     app.router.add_post("/record", record)
+     app.router.add_post("/interrupt_talk", interrupt_talk)
+     app.router.add_post("/is_speaking", is_speaking)
+-- 
+2.53.0.windows.2
+

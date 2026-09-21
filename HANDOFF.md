@@ -32,6 +32,16 @@
 
 ## 3. 本地启动
 
+Windows 下可以直接用仓库根目录的三个脚本（里面的路径全部相对，克隆到任意目录都能用）：
+
+| 脚本 | 作用 |
+|---|---|
+| `安装依赖.bat` | 首次运行：建虚拟环境、装后端依赖、由 `.env.example` 生成 `backend/.env`、装前端包、建数据库表 |
+| `启动系统.bat` | 依次拉起后端 / Celery / 可选实时数字人 / 前端，并打印健康检查结果 |
+| `停止系统.bat` | 停掉由本仓库启动的进程 |
+
+下面是等价的手动步骤。
+
 ### 基础服务
 
 ```powershell
@@ -90,13 +100,14 @@ npm run dev
 
 以下内容刻意不上传到 Git，接手人如需现有业务数据，应通过网盘、移动硬盘或服务器备份单独交接：
 
-- `backend/.env`：包含真实 API Key、数据库密码和 JWT 密钥
-- `georag_local.sql`：本地数据库导出
-- `pdf/`：原始 PDF 资料
-- `书院文化图片/`：书院图片素材
-- `mineru_out/`、`output/`、`backend/uploads/`：解析和上传产物
-- `models/`：MinerU/Hugging Face 等本地模型缓存
-- `源码.zip`、Word 文档和其他本地归档
+- `backend/.env`：包含真实 API Key、数据库密码和 JWT 密钥（仓库里只有 `.env.example`）
+- 数据库内容（账号、知识库、文档分块、题库、活动）：需导出 SQL 单独交接
+- `书院文化图片/`：书院图片素材（可选，通过 `ACADEMY_IMAGES_DIR` 指过去即可）
+- 书院 PDF 语料：在站点上传到知识库后由 Celery 入库
+- `数字人/` 原始视频与 `LiveTalking/data/` 帧数据：实时数字人素材
+- `LiveTalking/`：第三方实时数字人引擎（独立仓库，本地改造以补丁形式收录在 `docs/livetalking-patch/`）
+- `mineru_out/`、`backend/uploads/`：解析和上传产物
+- MinerU / Hugging Face 等本地模型缓存与各种压缩归档
 
 不要把真实密钥发到聊天群或提交到仓库。接手人应自行创建 `backend/.env`；如交接已有 Key，建议先在供应商控制台轮换后再通过安全渠道传递。
 
@@ -108,11 +119,11 @@ npm run dev
 
 3D 模型约定：
 
-- 默认模型：`frontend/public/models/avatar.glb`
-- 人物专属模型：`frontend/public/models/<人物 id>.glb`
-- 已准备：`zhuxi.glb`、`wangyangming.glb`
-- 其余人物缺少专属模型时自动回退到默认模型
+- 人物专属模型：`frontend/public/models/<人物 id>.glb`，未命中时回退 `avatar.glb`
+- 仓库内已有（Git LFS 管理）：`zhuxi.glb`、`zhuxi_ue5.glb`（王阳明复用）、`jiangwanli.glb`、`lvzuqian.glb`、`luxiangshan.glb`、`wangyangming.glb`
+- 罗从彦暂无专属 GLB，未接实时数字人时其 3D 画面会加载失败，属已知待补项
 - 动画文件位于 `frontend/public/models/anim/`
+- 克隆后若 GLB 只有几百字节，说明没拉 LFS：`git lfs install && git lfs pull`
 
 交接前已执行 `npm run build`，前端生产构建成功。构建存在单个大于 500 kB 的代码块提示，不影响运行，后续可按页面继续拆包优化。
 

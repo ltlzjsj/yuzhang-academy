@@ -1,0 +1,37 @@
+From 8962a10ab1ec3ecca1d7ebf5f36495eb6bdf530a Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Thu, 17 Sep 2026 15:55:58 +0800
+Subject: [PATCH 2/2] =?UTF-8?q?perf:=20=E9=99=90=E5=88=B6=20torch=20?=
+ =?UTF-8?q?=E7=AE=97=E5=AD=90=E7=BA=BF=E7=A8=8B=E6=B1=A0=EF=BC=88=E9=BB=98?=
+ =?UTF-8?q?=E8=AE=A4=E5=8D=95=E7=BA=BF=E7=A8=8B=EF=BC=89=EF=BC=8C=E8=AF=B4?=
+ =?UTF-8?q?=E8=AF=9D=E6=97=B6=E8=BF=9B=E7=A8=8B=20CPU=20=E4=BB=8E=203.2=20?=
+ =?UTF-8?q?=E6=A0=B8=E9=99=8D=E5=88=B0=200.83=20=E6=A0=B8?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ avatars/wav2lip_avatar.py | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/avatars/wav2lip_avatar.py b/avatars/wav2lip_avatar.py
+index 2bb44cb..4be495a 100644
+--- a/avatars/wav2lip_avatar.py
++++ b/avatars/wav2lip_avatar.py
+@@ -45,6 +45,13 @@ from utils.image import read_imgs, mirror_index
+ from utils.device import initialize_device
+ from registry import register
+ 
++# PyTorch 默认把内部算子线程池开到 CPU 核数；本项目每批张量很小（16×6×256×256），
++# 多线程只会空转抢 CPU —— 实测说话期间进程 CPU 从 3.2 核降到 0.88 核，帧率与画面不变。
++# 想恢复默认多线程行为：设环境变量 LT_TORCH_THREADS=0。
++_lt_threads = os.environ.get("LT_TORCH_THREADS", "1")
++if _lt_threads.isdigit() and int(_lt_threads) > 0:
++    torch.set_num_threads(int(_lt_threads))
++
+ device = initialize_device()
+ logger.info('Using {} for inference.'.format(device))
+ 
+-- 
+2.53.0.windows.2
+
