@@ -201,7 +201,11 @@ async function connect() {
     emit('ready', sessionId.value)
   } catch (e: any) {
     if (destroyed) return
-    error.value = e?.message || '数字人连接失败'
+    // 浏览器对 fetch 失败只给 "Failed to fetch"，这里换成能看懂的提示
+    const raw = e?.message || ''
+    error.value = /failed to fetch|networkerror|load failed/i.test(raw)
+      ? `数字人服务未连接（${LIVETALKING} 未启动或端口不通）`
+      : raw || '数字人连接失败'
     loading.value = false
     emit('error', error.value)
     cleanup()

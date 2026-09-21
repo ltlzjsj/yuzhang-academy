@@ -118,14 +118,6 @@ if exist "node_modules" (
   )
 )
 
-rem ------------------------------------------------------------------- lfs --
-for %%F in ("%FRONTEND%\public\models\zhuxi_ue5.glb") do set "GLB_SIZE=%%~zF"
-if not defined GLB_SIZE set "GLB_SIZE=0"
-if %GLB_SIZE% LSS 1000000 (
-  echo [!] the 3D models look like Git LFS pointers ^(not real files^).
-  echo     Run:  git lfs install  ^&^&  git lfs pull
-)
-
 rem -------------------------------------------------------------- database --
 echo [5/5] database schema
 cd /d "%BACKEND%"

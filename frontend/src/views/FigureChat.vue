@@ -2,8 +2,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { listFigures, type HistoricalFigure } from '@/api/figures'
-import DigitalHuman3D from '@/components/agent/DigitalHuman3D.vue'
-import XmovAvatar from '@/components/agent/XmovAvatar.vue'
 import TalkingPortrait from '@/components/agent/TalkingPortrait.vue'
 import LiveTalkingAvatar from '@/components/agent/LiveTalkingAvatar.vue'
 import { transcribe } from '@/api/voice'
@@ -45,14 +43,15 @@ const speech = useSpeechPlayback(() => ({
 }))
 const transcribing = ref(false)
 const autoRead = ref(true) // 收到回答后自动朗读（先生开口说话）
-const xmovRef = ref<{ speak: (text: string) => void; idle: () => void } | null>(null)
-const digitalHumanRef = ref<{ setPhoneme: (weights: Record<string, number> | null) => void } | null>(null)
 const talkingPortraitRef = ref<{ speak: (text: string) => void; stop: () => void } | null>(null)
 const liveTalkingRef = ref<{ speak: (text: string) => Promise<number> } | null>(null)
 // 影院字幕容器：文字增长时自动滚到最后一行
 const cineLineRef = ref<HTMLElement | null>(null)
-// 朱熹暂时改用“画像开口说话 + 点头呼吸”，与吕祖谦保持一致。
-const useXmov = computed(() => false)
+// 数字人只剩两态：LiveTalking 真人视频实时口型（首选）与画像开口说话（回退）。
+// 原 Three.js GLB 数字人（DigitalHuman3D）已整体移除，见 docs/数字人实时引擎.md。
+const figureSpeaking = ref(false)
+// LiveTalking 连接失败（服务没起、端口不通等）时退回人物画像，避免舞台空着
+const liveTalkingFailed = ref(false)
 // LiveTalking 实时数字人（WebRTC 口型驱动）：全部历史人物统一走这条链路。
 // 素材来自「数字人」目录的「说话动作 + 待机动作」两段视频：
 //   data/avatars/<id>_lt        —— 说话视频逐帧导出（wav2lip 在上面改口型）
@@ -96,12 +95,9 @@ const useLiveTalking = computed(() => !!liveTalkingAvatar.value)
 const useTalkingPortrait = computed(
   () => ['zhuxi', 'lvzuqian'].includes(fig.value?.id ?? '') && !useLiveTalking.value,
 )
-const isSpeaking = computed(() => (useXmov.value ? speech.speaking.value : aligned.speaking.value))
 
-// 自研数字人的音素驱动语音：播放时把口型权重喂给 DigitalHuman3D
-const aligned = useAlignedSpeech((weights) => {
-  digitalHumanRef.value?.setPhoneme(weights)
-})
+// 语音合成与播放（原先把音素权重喂给 3D 数字人，现在只用于朗读与状态）
+const aligned = useAlignedSpeech()
 
 async function toggleMic() {
   if (!auth.token) {
@@ -126,15 +122,13 @@ async function toggleMic() {
   } else {
     speech.stop()
     aligned.stop()
-    xmovRef.value?.idle()
     await recorder.start()
   }
 }
 
 function speakAnswer() {
   if (!latestAnswer.value.trim()) return
-  if (useXmov.value) xmovRef.value?.speak(latestAnswer.value)
-  else if (useLiveTalking.value) liveTalkingRef.value?.speak(latestAnswer.value)
+  if (useLiveTalking.value) liveTalkingRef.value?.speak(latestAnswer.value)
   else if (useTalkingPortrait.value) talkingPortraitRef.value?.speak(latestAnswer.value)
   else aligned.speak(latestAnswer.value, { voiceDesc: fig.value?.voice_desc || undefined })
 }
@@ -203,8 +197,6 @@ async function pumpAudio() {
       let duration = 0
       if (useLiveTalking.value) {
         duration = Number(await Promise.resolve(liveTalkingRef.value?.speak(sentence))) || 0
-      } else if (useXmov.value) {
-        xmovRef.value?.speak(sentence)
       } else {
         aligned.enqueue(sentence, { voiceDesc: fig.value?.voice_desc || undefined })
       }
@@ -354,6 +346,12 @@ function onPortraitError(message: string) {
   portraitPreparing.value = false
 }
 
+/** LiveTalking 连不上时收进错误提示，并把舞台换成人物画像。 */
+function onLiveTalkingError(message: string) {
+  liveTalkingFailed.value = true
+  onPortraitError(message)
+}
+
 const fig = computed(() => figures.value.find((f) => f.id === route.params.id) ?? null)
 // v2 界面（书院讲堂风 · 数字人为主）：江万里、罗从彦，其他人物保持原样。
 const isJiangwanli = computed(() => !!liveTalkingAvatar.value)
@@ -396,7 +394,6 @@ function resetContext() {
   stop()
   speech.stop()
   aligned.stop()
-  xmovRef.value?.idle()
   talkingPortraitRef.value?.stop()
   recorder.cancel()
   hiddenHistory.value = []
@@ -591,6 +588,7 @@ onBeforeUnmount(stop)
       <div class="fc__cineMain">
         <div class="fc__cineStage">
           <LiveTalkingAvatar
+            v-if="!liveTalkingFailed"
             ref="liveTalkingRef"
             :avatar-id="liveTalkingAvatar!.avatar"
             :custom-config="liveTalkingAvatar!.idle"
@@ -599,7 +597,14 @@ onBeforeUnmount(stop)
             :voice-style="fig.voice_style"
             :voice-desc="fig.voice_desc"
             @speaking="onPortraitSpeaking"
-            @error="onPortraitError"
+            @error="onLiveTalkingError"
+          />
+          <!-- LiveTalking 连不上时的兜底：展示人物画像（原 3D 模型已移除） -->
+          <img
+            v-else
+            class="fc__poster"
+            :src="portrait(fig.image_url) || ''"
+            :alt="fig.name"
           />
         </div>
 
@@ -643,18 +648,21 @@ onBeforeUnmount(stop)
       <div class="fc__left">
         <div
           class="fc__figure fc__figure--3d"
-          :class="{ 'is-speaking': speech.speaking.value }"
+          :class="{ 'is-speaking': figureSpeaking }"
           :style="{ '--talk': speech.level.value }"
         >
           <span class="fc__glow" />
           <LiveTalkingAvatar
-            v-if="useLiveTalking"
+            v-if="useLiveTalking && !liveTalkingFailed"
             ref="liveTalkingRef"
             :avatar-id="liveTalkingAvatar?.avatar || 'jiangwanli_lt'"
+            :custom-config="liveTalkingAvatar?.idle"
+            :zoom="liveTalkingAvatar?.zoom ?? 1"
             :voice-id="fig.voice_id"
             :voice-style="fig.voice_style"
             :voice-desc="fig.voice_desc"
-            @error="onPortraitError"
+            @speaking="figureSpeaking = $event"
+            @error="onLiveTalkingError"
           />
           <TalkingPortrait
             v-else-if="useTalkingPortrait"
@@ -668,14 +676,12 @@ onBeforeUnmount(stop)
             @ended="onPortraitEnded"
             @error="onPortraitError"
           />
-          <XmovAvatar v-else-if="useXmov" ref="xmovRef" />
-          <DigitalHuman3D
+          <!-- 最后兜底：LiveTalking 未启动时展示人物画像，不再回退到 3D 模型 -->
+          <img
             v-else
-            ref="digitalHumanRef"
-            :key="fig.id"
-            :src="fig.id === 'wangyangming' ? '/models/zhuxi_ue5.glb' : `/models/${fig.id}.glb`"
-            :level="speech.level.value"
-            :speaking="isSpeaking"
+            class="fc__poster"
+            :src="portrait(fig.image_url) || ''"
+            :alt="fig.name"
           />
         </div>
 
@@ -843,6 +849,13 @@ onBeforeUnmount(stop)
 .fc__figure--3d {
   width: min(460px, 86vw);
   height: min(60vh, 640px);
+}
+/* LiveTalking 未启动时的兜底：显示人物画像（原 3D 模型已移除） */
+.fc__poster {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 18px 40px rgba(0, 0, 0, 0.45));
 }
 
 .fc__glow {

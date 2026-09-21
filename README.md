@@ -1,7 +1,7 @@
 # 赣书院·智典（Yuzhang Academy）
 
 江西（江右）书院数智平台：**Vue 3 + FastAPI + Celery + MySQL + Redis**。
-包含书院知识库问答、图文检索、用户与内容管理、活动训练与题库，以及朱熹、陆九渊、王阳明等历史人物的文字 / 语音 / 3D 数字人对话。
+包含书院知识库问答、图文检索、用户与内容管理、活动训练与题库，以及朱熹、陆九渊、王阳明等历史人物的文字 / 语音 / 真人视频数字人对话。
 
 > 二次开发请看 [HANDOFF.md](HANDOFF.md)（代码入口、启动流程、未纳入 Git 的数据与当前状态）。
 > 本项目由地质探矿 RAG 系统 **GeoRag** 改造而来，保留了多用户鉴权、会话持久化、知识库 CRUD、PDF 异步解析入库、BM25 检索、引用溯源等能力；生成模型从本地 Ollama 切换为云端多模态 API。
@@ -12,7 +12,7 @@
 - **图文智能问答**：BM25 检索书院文字与配图，再交给多模态大模型生成带引用的回答。
 - **历史人物对话**：朱熹、罗从彦、江万里、陆九渊、吕祖谦、王阳明等人物拥有独立身份、生平、提示词和古风音色。
 - **语音交互**：ASR 语音识别 + TTS 语音合成，可边生成回答边播放语音。
-- **数字人**：两套形态——浏览器内 Three.js 加载 GLB 模型的 3D 数字人；以及可选的 LiveTalking 真人视频实时口型数字人。
+- **数字人**：LiveTalking 真人视频实时口型数字人（wav2lip 逐帧改口型 + WebRTC 推流）；未接入时回退到人物画像。
 - **管理与学习**：用户鉴权、会话记录、活动管理、训练、题库和管理后台。
 
 ## 环境要求
@@ -24,7 +24,6 @@
 | Node.js | 18+ |
 | MySQL | 8.x（必需） |
 | Redis | 任意 5+ 版本（必需，Celery 用） |
-| Git LFS | 克隆 3D 模型需要（约 330 MB） |
 | Qdrant | 可选，默认关闭向量检索，不装也能跑 |
 | NVIDIA GPU | 可选，只有实时数字人（LiveTalking）需要 |
 | API Key | 问答 / 语音需要一家大模型服务的 Key（默认小米 MiMo） |
@@ -37,7 +36,7 @@ cd yuzhang-academy
 ```
 
 1. **装依赖**：双击 `安装依赖.bat`
-   自动完成：建 `backend\.venv` 并 `pip install -r requirements.txt` → 由 `.env.example` 生成 `backend\.env` → 前端 `npm ci` → 建数据库表（MySQL 已启动时）→ 检查 Git LFS 模型是否拉全。
+   自动完成：建 `backend\.venv` 并 `pip install -r requirements.txt` → 由 `.env.example` 生成 `backend\.env` → 前端 `npm ci` → 建数据库表（MySQL 已启动时）。
 
 2. **起基础服务**（MySQL + Redis，二选一）：
 
@@ -94,7 +93,6 @@ cd frontend && npm install && npm run dev
 |---|---|---|
 | 知识库语料 | `data/kb/pdf/` | 《江右书院行》图文 11 个分卷，共 67 MB |
 | 知识库数据 | `data/seed/georag_seed.sql` | 知识库、文档、检索分块、题库（已剔除账号 / 会话 / 训练记录等个人数据） |
-| 3D 人物模型 | `frontend/public/models/` | Git LFS 管理，克隆需 `git lfs` |
 
 MySQL 起来之后导入（仓库根目录执行）：
 
@@ -131,7 +129,7 @@ powershell -ExecutionPolicy Bypass -File scripts\download_assets.ps1 -Only image
 > 国内网络访问 GitHub 下载大文件可能很慢（本项目开发机上实测约 1 MB / 2 分钟，上传反而正常）。
 > 如果太慢，建议把两个 zip 镜像到 Gitee 或网盘分发，脚本里的下载地址换成镜像地址即可。
 
-不下载也能跑：书院配图位置显示书院名首字印章占位，历史人物页只有文字 / 语音对话 + 3D 数字人。
+不下载也能跑：书院配图位置显示书院名首字印章占位，历史人物页只有文字 / 语音对话 + 人物画像。
 
 ### 三、自己录入
 
@@ -139,8 +137,7 @@ powershell -ExecutionPolicy Bypass -File scripts\download_assets.ps1 -Only image
 |---|---|---|
 | 书院实拍 / 事件画 / 立绘 | 把目录指给 `backend\.env` 的 `ACADEMY_IMAGES_DIR`（**相对路径以 `backend/` 为基准**，默认 `./academy_images`）。系统递归遍历，按书院名在**文件路径**里做子串匹配，**无需按书院分文件夹** | 配图位置显示首字印章占位 |
 | 书院 PDF 语料 | 后台新建知识库 → 上传 PDF → Celery 自动解析分块 | 知识库为空，问答只能闲聊 |
-| 数字人素材 | 见 [docs/数字人实时引擎.md](docs/数字人实时引擎.md) | 历史人物页只有文字 / 语音对话 + 3D 数字人 |
-| 3D 人物 GLB 模型 | 已在仓库中（Git LFS）。克隆后若文件只有几百字节，执行 `git lfs install && git lfs pull` | 3D 数字人加载失败 |
+| 数字人素材 | 见 [docs/数字人实时引擎.md](docs/数字人实时引擎.md) | 历史人物页只有文字 / 语音对话 + 人物画像 |
 
 ## 配置
 
@@ -188,7 +185,7 @@ scripts/            数据导入、素材包下载、停止服务等辅助脚本
 - **大模型**：默认小米 **MiMo `mimo-v2.5`**（Anthropic Messages API）。`mimo-v2.5` 才是全模态可识图，`mimo-v2.5-pro` 仅文本，图文场景务必用前者。由 `LLM_PROVIDER` 控制，可切回 `ollama`。
 - **检索**：`RAG_VECTOR_ENABLED=false` 时用 **BM25 + 书院名加权**（`app/services/academies.py`），不依赖 embedding 模型与 Qdrant。
 - **图文**：解析出的每页配图随入库写进 `chunk.meta.images`，检索命中后以 web URL 回传展示，并把若干张交给多模态模型识图，静态服务挂载在 `/api/v1/assets/mineru`。
-- **3D 数字人**：`frontend/src/components/agent/DigitalHuman3D.vue`，模型约定 `frontend/public/models/<人物 id>.glb`，没有专属模型时回退默认；支持 Draco / Meshopt，自带动画优先。
+- **数字人**：`frontend/src/components/agent/LiveTalkingAvatar.vue`（LiveTalking 实时视频数字人）、`TalkingPortrait.vue`（画像开口说话，作为回退）。原先基于 Three.js + GLB 的 3D 数字人已整体移除。
 - **实时数字人**：见 [docs/数字人实时引擎.md](docs/数字人实时引擎.md)。
 
 ## 服务器部署
@@ -213,7 +210,6 @@ docker compose --env-file deploy.env -f docker-compose.yml up -d --build
 | 页面能开但接口 500 | 看启动窗口里的后端日志；确认 `alembic upgrade head` 已执行 |
 | 问回答复为空 / 报鉴权失败 | `MIMO_API_KEY` 没填或已失效 |
 | 数字人黑屏 | LiveTalking 未启动或该人物 `data/avatars/<id>` 不存在，见 `docs/数字人实时引擎.md` |
-| 3D 人物加载失败 | 模型是 LFS 指针，执行 `git lfs install && git lfs pull` |
 | 书院配图不显示 | `ACADEMY_IMAGES_DIR` 路径不对，或文件名里没有书院名 |
 | 上传 PDF 后一直不解析 | Celery worker 没起，或 Redis 没起 |
 
