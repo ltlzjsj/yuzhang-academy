@@ -23,6 +23,9 @@
 - `frontend/src/views/`：主要页面
 - `frontend/src/components/agent/LiveTalkingAvatar.vue`：LiveTalking 实时数字人（WebRTC）
 - `frontend/src/components/agent/TalkingPortrait.vue`：画像开口说话（无 LiveTalking 时的回退）
+- `frontend/src/views/Photo.vue`：AI 合影留念（选先贤 / 书院场景 / 姿势 / 服装）
+- `backend/app/api/v1/photo.py`：合影接口（`/bg-remove` 本地抠图、`/generate` 调图像模型、`/config` 查配置）
+- `backend/app/services/nanoapple_image.py`：图像生成通道（Gemini / GPT Image）
 - `backend/app/main.py`：FastAPI 应用入口
 - `backend/app/api/v1/`：接口路由
 - `backend/app/services/`：问答、历史人物、模型调用和文档解析
@@ -134,6 +137,13 @@ npm run dev
 - 同时移除了长期写死为 `false` 的 Xmov SDK 旧链路（`XmovAvatar.vue`、`XmovAvatarTest.vue` 及 `xmov-test` 路由）
 - 未接入 LiveTalking 时，历史人物页回退到 `TalkingPortrait.vue`（画像开口说话），最后兜底为静态画像
 - 历史里仍保留过 GLB 的 LFS 对象（约 330 MB，占 GitHub LFS 配额）；如需彻底清空配额要重写历史 + 强推
+
+AI 合影留念（`/photo`，公开路由）：
+
+- 前端 `frontend/src/views/Photo.vue`；后端 `backend/app/api/v1/photo.py` + `backend/app/services/nanoapple_image.py`
+- 人像抠图在本地跑（`rembg` 的 `u2netp`，首次使用自动下载到 `~/.u2net/`），生成环节才调云端图像模型
+- 需要 `GEMINI_API_KEY`（或可选的 `GPT_IMAGE_API_KEY`）；未配置时 `/api/v1/photo/config` 返回 `configured: false`，页面会提示「未配置」
+- 书院场景背景取自 `ACADEMY_IMAGES_DIR`，人物形象用仓库内 `frontend/public/assets/historical*/` 的图片
 
 交接前已执行 `npm run build`，前端生产构建成功。构建存在单个大于 500 kB 的代码块提示，不影响运行，后续可按页面继续拆包优化。
 

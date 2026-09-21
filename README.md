@@ -13,6 +13,7 @@
 - **历史人物对话**：朱熹、罗从彦、江万里、陆九渊、吕祖谦、王阳明等人物拥有独立身份、生平、提示词和古风音色。
 - **语音交互**：ASR 语音识别 + TTS 语音合成，可边生成回答边播放语音。
 - **数字人**：LiveTalking 真人视频实时口型数字人（wav2lip 逐帧改口型 + WebRTC 推流）；未接入时回退到人物画像。
+- **AI 合影留念**：上传（或现场拍摄）游客全身照 → 本地抠图 → 选先贤、书院场景、互动姿势与服装 → 调图像模型生成合影；照片仅用于本次生成，服务端不保存原图。
 - **管理与学习**：用户鉴权、会话记录、活动管理、训练、题库和管理后台。
 
 ## 环境要求
@@ -139,6 +140,9 @@ powershell -ExecutionPolicy Bypass -File scripts\download_assets.ps1 -Only image
 | 书院 PDF 语料 | 后台新建知识库 → 上传 PDF → Celery 自动解析分块 | 知识库为空，问答只能闲聊 |
 | 数字人素材 | 见 [docs/数字人实时引擎.md](docs/数字人实时引擎.md) | 历史人物页只有文字 / 语音对话 + 人物画像 |
 
+> 「合影留念」页的书院场景背景同样取自 `ACADEMY_IMAGES_DIR`，人物形象用仓库自带的
+> `frontend/public/assets/historical*/` 图片（「写实 3D」按钮指的是写实渲染图，与已移除的 GLB 模型无关）。
+
 ## 配置
 
 复制 `backend/.env.example` 为 `backend/.env` 后按需修改，重点项：
@@ -155,7 +159,15 @@ RAG_VECTOR_ENABLED=false         # 关闭向量检索（BM25 即可，无需 Qdr
 RAG_GATE_ENABLED=true            # 单域书院场景的语义门控
 ACADEMY_IMAGES_DIR=./academy_images
 MINERU_OUTPUT_DIR=./mineru_out
+
+# AI 合影：图像生成 Key（不填则合影页提示未配置、无法生成）
+GEMINI_API_KEY=                  # ← 填自己的图像生成 Key
+GEMINI_MODEL=gemini-3.1-flash-image-preview-time
+# GPT_IMAGE_API_KEY=             # 可选：换用 GPT Image 2 通道
 ```
+
+> 合影页的人像抠图在本地跑（`rembg` 的 `u2netp` 模型，约 4.4 MB，**首次使用时自动下载** 到 `~/.u2net/`），
+> 生成环节才调用云端图像模型。访问 `GET /api/v1/photo/config` 可以看到当前哪些通道已配置好。
 
 也可以用环境变量临时注入 Key，不写进文件：
 
@@ -187,6 +199,7 @@ scripts/            数据导入、素材包下载、停止服务等辅助脚本
 - **图文**：解析出的每页配图随入库写进 `chunk.meta.images`，检索命中后以 web URL 回传展示，并把若干张交给多模态模型识图，静态服务挂载在 `/api/v1/assets/mineru`。
 - **数字人**：`frontend/src/components/agent/LiveTalkingAvatar.vue`（LiveTalking 实时视频数字人）、`TalkingPortrait.vue`（画像开口说话，作为回退）。原先基于 Three.js + GLB 的 3D 数字人已整体移除。
 - **实时数字人**：见 [docs/数字人实时引擎.md](docs/数字人实时引擎.md)。
+- **AI 合影**：前端 `frontend/src/views/Photo.vue`；后端 `backend/app/api/v1/photo.py`（`/bg-remove` 本地抠图、`/generate` 调图像模型、`/config` 查配置）+ `backend/app/services/nanoapple_image.py`。
 
 ## 服务器部署
 
@@ -212,6 +225,8 @@ docker compose --env-file deploy.env -f docker-compose.yml up -d --build
 | 数字人黑屏 | LiveTalking 未启动或该人物 `data/avatars/<id>` 不存在，见 `docs/数字人实时引擎.md` |
 | 书院配图不显示 | `ACADEMY_IMAGES_DIR` 路径不对，或文件名里没有书院名 |
 | 上传 PDF 后一直不解析 | Celery worker 没起，或 Redis 没起 |
+| 合影页提示未配置 / 生成失败 | `backend\.env` 没填 `GEMINI_API_KEY` 或 Key 失效；`GET /api/v1/photo/config` 可确认各通道状态 |
+| 合影第一次生成明显偏慢 | 首次使用会下载并加载抠图模型 `u2netp`（约 4.4 MB），之后正常 |
 
 ## 维护要点
 
