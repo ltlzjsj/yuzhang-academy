@@ -98,15 +98,25 @@ npm run dev
 
 ## 4. 不在 Git 中的数据
 
-以下内容刻意不上传到 Git，接手人如需现有业务数据，应通过网盘、移动硬盘或服务器备份单独交接：
+已经放进仓库的（克隆即可用）：
+
+- `data/kb/pdf/`：知识库语料 PDF 11 篇
+- `data/seed/georag_seed.sql`：知识库、文档、检索分块、题库；导入脚本 `scripts/import_data.ps1`
+- `frontend/public/models/`：3D 人物模型（Git LFS）
+- `docs/`：数字人接入说明 + LiveTalking 本地改造补丁
+
+放在 GitHub Release `assets-v1` 里按需下载（体积太大，进仓库会让克隆变慢）：
+
+- `shuyuan-images.zip`：`书院文化图片/`（约 911 MB）
+- `livetalking-data.zip`：`LiveTalking/data` 帧数据 + `数字人/` 原始视频（约 742 MB）
+- 下载脚本 `scripts/download_assets.ps1`
+
+仍然不入库、需要单独交接的：
 
 - `backend/.env`：包含真实 API Key、数据库密码和 JWT 密钥（仓库里只有 `.env.example`）
-- 数据库内容（账号、知识库、文档分块、题库、活动）：需导出 SQL 单独交接
-- `书院文化图片/`：书院图片素材（可选，通过 `ACADEMY_IMAGES_DIR` 指过去即可）
-- 书院 PDF 语料：在站点上传到知识库后由 Celery 入库
-- `数字人/` 原始视频与 `LiveTalking/data/` 帧数据：实时数字人素材
-- `LiveTalking/`：第三方实时数字人引擎（独立仓库，本地改造以补丁形式收录在 `docs/livetalking-patch/`）
-- `mineru_out/`、`backend/uploads/`：解析和上传产物
+- 线上/本地的账号、会话、训练记录等个人数据（导出时已剔除）
+- `LiveTalking/`：第三方实时数字人引擎源码（独立仓库，按 `docs/livetalking-patch/` 打补丁）
+- `mineru_out/`、`backend/uploads/` 里的解析临时产物
 - MinerU / Hugging Face 等本地模型缓存与各种压缩归档
 
 不要把真实密钥发到聊天群或提交到仓库。接手人应自行创建 `backend/.env`；如交接已有 Key，建议先在供应商控制台轮换后再通过安全渠道传递。

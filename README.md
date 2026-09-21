@@ -29,7 +29,7 @@
 | NVIDIA GPU | 可选，只有实时数字人（LiveTalking）需要 |
 | API Key | 问答 / 语音需要一家大模型服务的 Key（默认小米 MiMo） |
 
-## 快速开始（Windows，三步）
+## 快速开始（Windows，四步）
 
 ```powershell
 git clone https://github.com/ltlzjsj/yuzhang-academy.git
@@ -50,7 +50,15 @@ cd yuzhang-academy
 
    然后编辑 `backend\.env`，至少填两项：`MIMO_API_KEY`（或其它服务商 Key）与 `JWT_SECRET`（任意长随机串）。
 
-3. **启动**：双击 `启动系统.bat`
+3. **导入自带数据**（知识库语料 + 题库，约 67 MB 随仓库提供）：
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\import_data.ps1
+   ```
+
+   导入后即可用 `admin / shuyuan@2026` 登录（详见下方「数据与素材」）。书院图片、数字人帧数据体积较大，放在 Release 里按需下载，同样有脚本。
+
+4. **启动**：双击 `启动系统.bat`
    它会依次拉起后端（:8000）、Celery、可选数字人（:8010）、前端（:5173），等待后自动打开浏览器，并在窗口里打印健康检查结果。关掉这个窗口即停止全部服务（也可以用 `停止系统.bat`）。
 
 - 前端：http://localhost:5173
@@ -78,32 +86,54 @@ cd backend && celery -A app.workers.celery_app worker --loglevel=info --pool=sol
 cd frontend && npm install && npm run dev
 ```
 
-## 首次使用的数据准备
+## 数据与素材
 
-仓库里**不包含**业务数据（数据库内容、上传的 PDF、书院图片、数字人视频），克隆后是一个"空壳但可运行"的系统：
+### 一、随仓库自带（克隆即有）
 
-1. 打开站点注册一个账号，然后在后端目录把它设为管理员，才能进 `/admin`：
+| 内容 | 位置 | 说明 |
+|---|---|---|
+| 知识库语料 | `data/kb/pdf/` | 《江右书院行》图文 11 个分卷，共 67 MB |
+| 知识库数据 | `data/seed/georag_seed.sql` | 知识库、文档、检索分块、题库（已剔除账号 / 会话 / 训练记录等个人数据） |
+| 3D 人物模型 | `frontend/public/models/` | Git LFS 管理，克隆需 `git lfs` |
 
-   ```powershell
-   cd backend
-   .\.venv\Scripts\python.exe -m scripts.set_admin <你的用户名>
-   ```
+MySQL 起来之后导入（仓库根目录执行）：
 
-2. 想预置活动资讯示例数据：
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\import_data.ps1
+```
 
-   ```powershell
-   .\.venv\Scripts\python.exe -m scripts.seed_activities
-   ```
+它会依次建表（alembic）、导入数据、并把 PDF 还原到 `backend/uploads/` 下数据库记录的位置。
+导入后可直接登录管理后台：
 
-3. 想问答有内容：在后台新建知识库 → 上传书院 PDF → Celery 自动解析分块入库。
+> **默认账号：`admin`　密码：`shuyuan@2026`**（登录后请立即修改，或自己注册账号并用 `python -m scripts.set_admin <用户名>` 提权）
 
-### 可选素材（放好即生效，不需要改代码）
+想给活动资讯加示例数据：`cd backend && .\.venv\Scripts\python.exe -m scripts.seed_activities`
+
+### 二、大素材包（GitHub Release，按需下载）
+
+图片和数字人帧数据加起来 1.7 GB，放进仓库会让每次克隆都变慢，所以单独放在 [Release `assets-v1`](https://github.com/ltlzjsj/yuzhang-academy/releases/tag/assets-v1)。
+一条命令自动下载并解压到正确位置，并按需改好 `backend/.env`：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\download_assets.ps1
+# 也可以只下其中一部分
+powershell -ExecutionPolicy Bypass -File scripts\download_assets.ps1 -Only images
+```
+
+| 附件 | 内容 | 大小 | 解压位置 |
+|---|---|---|---|
+| `shuyuan-images.zip` | 书院实拍、事件画、历史名人立绘（`书院文化图片/`） | ~911 MB | `assets/书院文化图片/`，并自动写入 `ACADEMY_IMAGES_DIR` |
+| `livetalking-data.zip` | 说话帧 `data/avatars`、待机帧 `data/custom`、原始素材视频 `数字人/` | ~742 MB | `LiveTalking/data/`（没有 LiveTalking 时先放 `assets/livetalking/`） |
+
+不下载也能跑：书院配图位置显示书院名首字印章占位，历史人物页只有文字 / 语音对话 + 3D 数字人。
+
+### 三、自己录入
 
 | 素材 | 放置方式 | 没有会怎样 |
 |---|---|---|
-| 书院实拍 / 事件画 / 立绘 | 把目录指给 `backend\.env` 的 `ACADEMY_IMAGES_DIR`（**相对路径以 `backend/` 为基准**，默认 `./academy_images`）。系统递归遍历，按书院名在**文件路径**里做子串匹配，**无需按书院分文件夹** | 相关配图位置显示书院名首字印章占位 |
-| 书院 PDF 语料 | 在站点里上传到知识库即可 | 知识库为空，问答只能闲聊 |
-| 数字人视频 + 帧数据 | 见 [docs/数字人实时引擎.md](docs/数字人实时引擎.md) | 历史人物页只有文字 / 语音对话 + 3D 数字人 |
+| 书院实拍 / 事件画 / 立绘 | 把目录指给 `backend\.env` 的 `ACADEMY_IMAGES_DIR`（**相对路径以 `backend/` 为基准**，默认 `./academy_images`）。系统递归遍历，按书院名在**文件路径**里做子串匹配，**无需按书院分文件夹** | 配图位置显示首字印章占位 |
+| 书院 PDF 语料 | 后台新建知识库 → 上传 PDF → Celery 自动解析分块 | 知识库为空，问答只能闲聊 |
+| 数字人素材 | 见 [docs/数字人实时引擎.md](docs/数字人实时引擎.md) | 历史人物页只有文字 / 语音对话 + 3D 数字人 |
 | 3D 人物 GLB 模型 | 已在仓库中（Git LFS）。克隆后若文件只有几百字节，执行 `git lfs install && git lfs pull` | 3D 数字人加载失败 |
 
 ## 配置
@@ -140,9 +170,11 @@ frontend/           Vue 3 + Vite（src/views 页面、src/components/agent 数�
 docker/             本地开发的 MySQL / Redis / Qdrant
 deploy/tencent/     服务器上的完整 Docker 部署（见目录内 README）
 docs/               数字人引擎接入说明 + LiveTalking 本地补丁
+data/               自带业务数据：知识库语料 PDF + 数据库种子 SQL
+scripts/            数据导入、素材包下载、停止服务等辅助脚本
 启动系统.bat        一键启动
-停止系统.bat        停止由本仓库启动的进程
 安装依赖.bat        首次运行的环境安装
+停止系统.bat        停止由本仓库启动的进程
 ```
 
 ## 技术要点

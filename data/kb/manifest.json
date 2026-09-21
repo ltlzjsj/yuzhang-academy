@@ -1,0 +1,99 @@
+{
+  "knowledge_bases": [
+    {
+      "id": 1,
+      "name": "书院大模型知识库"
+    }
+  ],
+  "documents": [
+    {
+      "document_id": 1,
+      "kb_id": 1,
+      "filename": "江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-1.pdf",
+      "pdf": "01-江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-1.pdf",
+      "target": "uploads/kb_1/6145740766c6428b986b2d7b5ef0abb6.pdf",
+      "size_bytes": 10601655
+    },
+    {
+      "document_id": 2,
+      "kb_id": 1,
+      "filename": "江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-2.pdf",
+      "pdf": "02-江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-2.pdf",
+      "target": "uploads/kb_1/ff388c173b974d3481d20374cc94f8aa.pdf",
+      "size_bytes": 4736496
+    },
+    {
+      "document_id": 3,
+      "kb_id": 1,
+      "filename": "江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-3.pdf",
+      "pdf": "03-江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-3.pdf",
+      "target": "uploads/kb_1/d32076563efe4db48ff95218484b1a10.pdf",
+      "size_bytes": 2123963
+    },
+    {
+      "document_id": 4,
+      "kb_id": 1,
+      "filename": "江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-4.pdf",
+      "pdf": "04-江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-4.pdf",
+      "target": "uploads/kb_1/c6414eda643243a4a6080d71ea1ed75d.pdf",
+      "size_bytes": 5533521
+    },
+    {
+      "document_id": 5,
+      "kb_id": 1,
+      "filename": "江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-5.pdf",
+      "pdf": "05-江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-5.pdf",
+      "target": "uploads/kb_1/b40d5c3194c44fa5bc3594c02d75bb17.pdf",
+      "size_bytes": 11676699
+    },
+    {
+      "document_id": 6,
+      "kb_id": 1,
+      "filename": "江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-6.pdf",
+      "pdf": "06-江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-6.pdf",
+      "target": "uploads/kb_1/68808a920ebe4e789a8e9292c06d866a.pdf",
+      "size_bytes": 4623825
+    },
+    {
+      "document_id": 7,
+      "kb_id": 1,
+      "filename": "江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-7.pdf",
+      "pdf": "07-江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-7.pdf",
+      "target": "uploads/kb_1/7a39392a9a3a4cafa13d86477da591b2.pdf",
+      "size_bytes": 7945112
+    },
+    {
+      "document_id": 8,
+      "kb_id": 1,
+      "filename": "江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-8.pdf",
+      "pdf": "08-江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-8.pdf",
+      "target": "uploads/kb_1/00df0301817a4a9bafb2d4910ff758ae.pdf",
+      "size_bytes": 13519747
+    },
+    {
+      "document_id": 9,
+      "kb_id": 1,
+      "filename": "江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-9.pdf",
+      "pdf": "09-江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-9.pdf",
+      "target": "uploads/kb_1/cfb4f42113784f108c7c8fd0d501db3a.pdf",
+      "size_bytes": 2095197
+    },
+    {
+      "document_id": 10,
+      "kb_id": 1,
+      "filename": "江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-10.pdf",
+      "pdf": "10-江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-10.pdf",
+      "target": "uploads/kb_1/fb5b290f2af64ef8850075664bfc0a6c.pdf",
+      "size_bytes": 6771246
+    },
+    {
+      "document_id": 11,
+      "kb_id": 1,
+      "filename": "江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-11.pdf",
+      "pdf": "11-江右书院行之图文内文(4)0508_compressed (1)_compressed (1)-11.pdf",
+      "target": "uploads/kb_1/513ecccd1652417d88a35f8eb72754f9.pdf",
+      "size_bytes": 200081
+    }
+  ],
+  "missing": []
+}

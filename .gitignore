@@ -25,6 +25,9 @@ mineru_out/
 models/
 models-backup/
 pdf/
+# 例外：仓库自带的语料 PDF 需要提交（data/kb/pdf）
+!data/kb/pdf/
+!data/kb/pdf/**
 yzsfxy/
 书院文化图片/
 *.docx
