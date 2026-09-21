@@ -125,6 +125,12 @@ powershell -ExecutionPolicy Bypass -File scripts\download_assets.ps1 -Only image
 | `shuyuan-images.zip` | 书院实拍、事件画、历史名人立绘（`书院文化图片/`） | ~911 MB | `assets/书院文化图片/`，并自动写入 `ACADEMY_IMAGES_DIR` |
 | `livetalking-data.zip` | 说话帧 `data/avatars`、待机帧 `data/custom`、原始素材视频 `数字人/` | ~742 MB | `LiveTalking/data/`（没有 LiveTalking 时先放 `assets/livetalking/`） |
 
+脚本会自动查询附件直链（直连 CDN），失败时退回 `releases/download` 地址，并支持断点续传；
+某个通道长时间没有进展会自动切换。
+
+> 国内网络访问 GitHub 下载大文件可能很慢（本项目开发机上实测约 1 MB / 2 分钟，上传反而正常）。
+> 如果太慢，建议把两个 zip 镜像到 Gitee 或网盘分发，脚本里的下载地址换成镜像地址即可。
+
 不下载也能跑：书院配图位置显示书院名首字印章占位，历史人物页只有文字 / 语音对话 + 3D 数字人。
 
 ### 三、自己录入

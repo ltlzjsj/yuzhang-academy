@@ -1,4 +1,4 @@
-<#
+﻿<#
 导入仓库自带的业务数据：
   1. 建表（alembic upgrade head）
   2. 导入 data\seed\georag_seed.sql —— 知识库、文档、检索分块、题库、活动
