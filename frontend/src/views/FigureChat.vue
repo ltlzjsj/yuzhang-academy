@@ -77,11 +77,13 @@ const LIVE_TALKING_AVATARS: Record<string, { avatar: string; idle?: string; zoom
     idle: JSON.stringify([{ audiotype: 1, imgpath: './data/custom/lvzuqian_idle' }]),
     zoom: 1.31,
   },
-  // 陆九渊、王阳明原片为 4:3（480×640），头顶已贴近画面顶端，保持原样不放大
+  // 陆九渊原片为 4:3（480×640），头顶已贴近画面顶端，保持原样不放大
   luxiangshan: {
     avatar: 'luxiangshan_lt',
     idle: JSON.stringify([{ audiotype: 1, imgpath: './data/custom/luxiangshan_idle' }]),
   },
+  // 王阳明 2026-10 换成 9:16 竖屏素材（480×854），人脸占画面高约 16.7%，
+  // 与江万里（16.5%）接近，因此同样不放大
   wangyangming: {
     avatar: 'wangyangming_lt',
     idle: JSON.stringify([{ audiotype: 1, imgpath: './data/custom/wangyangming_idle' }]),
