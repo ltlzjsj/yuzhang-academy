@@ -1,0 +1,35 @@
+From 10a77c294d7cce30f8a7270cc10939eebe5b442a Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Sun, 11 Oct 2026 18:19:35 +0800
+Subject: [PATCH] =?UTF-8?q?feat:=20=E6=9C=B1=E7=86=B9=E6=8D=A2=E6=88=90=20?=
+ =?UTF-8?q?2026-10=20=E6=96=B0=E7=B4=A0=E6=9D=90=EF=BC=8C=E5=B9=B6?=
+ =?UTF-8?q?=E4=B8=BA=E4=BB=96=E4=B9=9F=E5=BC=80=E5=90=AF=E8=A1=A5=E4=B8=81?=
+ =?UTF-8?q?=E7=BB=86=E8=8A=82=E6=B3=A8=E5=85=A5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 用新素材（说话 172 帧 / 待机 69 帧，720x1280）重生成 zhuxi_lt 与 zhuxi_idle
+- 新素材嘴部细节很足（嘴部锐度约为罗从彦的 1.8 倍）但张嘴幅度仍偏小
+  （嘴部动作量 2.86 vs 罗从彦 3.30），因此保留 MOUTH_GAIN=1.35
+- PATCH_DETAIL 给 zhuxi_lt 也开 0.55：素材越锐，模型重绘区的"糊"越显眼
+- 实测（10 帧连拍）：嘴部动作量 2.61 -> 6.14，嘴部锐度 +22%，无黑块
+---
+ avatars/wav2lip_avatar.py | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/avatars/wav2lip_avatar.py b/avatars/wav2lip_avatar.py
+index 539ce79..5a5fb64 100644
+--- a/avatars/wav2lip_avatar.py
++++ b/avatars/wav2lip_avatar.py
+@@ -115,6 +115,7 @@ PATCH_DETAIL = {
+     "jiangwanli_lt": 0.55,
+     "luxiangshan_lt": 0.55,
+     "lvzuqian_lt": 0.55,
++    "zhuxi_lt": 0.55,   # 2026-10 新素材嘴部细节更足（锐度约为罗从彦 1.8 倍），更需要补纹理
+ }
+ 
+ # 防纯黑保护：增益/细节注入都可能把嘴唇一带压到 0（观感就是"一小片变黑"）。
+-- 
+2.53.0.windows.2
+
