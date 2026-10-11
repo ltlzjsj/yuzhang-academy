@@ -1,0 +1,60 @@
+From 3e22ed76056fa6618ccdf24ba7995fbf35bc5176 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Sun, 11 Oct 2026 17:02:10 +0800
+Subject: [PATCH] =?UTF-8?q?feat:=20=E6=8C=89=E4=BA=BA=E7=89=A9=E6=94=BE?=
+ =?UTF-8?q?=E5=A4=A7=E5=BC=A0=E5=98=B4=E5=B9=85=E5=BA=A6=EF=BC=88=E8=A7=A3?=
+ =?UTF-8?q?=E5=86=B3=E7=B4=A0=E6=9D=90=E6=9C=AC=E8=BA=AB=E5=8A=A8=E4=BD=9C?=
+ =?UTF-8?q?=E5=B0=8F=E3=80=81=E7=9C=8B=E7=9D=80=E5=83=8F=E6=B2=A1=E5=BC=A0?=
+ =?UTF-8?q?=E5=98=B4=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+朱熹的素材实测：说话时嘴部逐帧变化量 2.61，待机 2.85（几乎无差别），
+而罗从彦是 10.85/10.54 —— 说明症结在素材本身的张嘴幅度。
+新增 MOUTH_GAIN 表：对下半张脸做 out = orig + gain*(gen - orig) 的差异增益，
+只放大模型真正动过的地方，默认 1.0 不影响其他人；朱熹设 1.6。
+实测朱熹嘴部变化量 2.61 -> 6.85（2.6 倍），画面里能明显看到张嘴。
+---
+ avatars/wav2lip_avatar.py | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/avatars/wav2lip_avatar.py b/avatars/wav2lip_avatar.py
+index 08009b7..8270987 100644
+--- a/avatars/wav2lip_avatar.py
++++ b/avatars/wav2lip_avatar.py
+@@ -94,6 +94,16 @@ def load_avatar(avatar_id):
+ 
+     return frame_list_cycle,face_list_cycle,coord_list_cycle
+ 
++# ---------------------------------------------------------------------------
++# 张嘴幅度增益：部分素材的"讲话动作"本身幅度就小（如朱熹，实测说话时嘴部逐帧变化量
++# 只有罗从彦的 1/4，且与待机状态几乎无差别），观感就是"嘴没张开"。
++# 这里按 avatar_id 对**下半张脸**的变化量做增益：out = orig + gain * (gen - orig)，
++# 只放大模型真正动过的地方，默认 1.0（不干预）。只列需要放大的人物，避免影响其他人。
++# ---------------------------------------------------------------------------
++MOUTH_GAIN = {
++    "zhuxi_lt": 1.6,
++}
++
+ @torch.no_grad()
+ def warm_up(batch_size,model,modelres):
+     # 预热函数
+@@ -165,6 +175,14 @@ class LipReal(BaseAvatar):
+         # 贴回是「256x256 -> 人脸框尺寸」的降采样，用 INTER_AREA 比默认的线性插值更锐、混叠更少
+         res_frame = cv2.resize(pred_frame.astype(np.uint8),(x2-x1,y2-y1),interpolation=cv2.INTER_AREA)
+         res_frame = self._sharpen_lower_face(res_frame)
++        # 张嘴幅度增益：只动下半张脸，且只放大「模型输出与原始帧的差异」
++        gain = MOUTH_GAIN.get(str(getattr(self.opt, "avatar_id", "")), 1.0)
++        if gain != 1.0:
++            roi0 = combine_frame[y1:y2, x1:x2].astype(np.float32)
++            gen0 = res_frame.astype(np.float32)
++            rows = slice(int(res_frame.shape[0] * 0.5), res_frame.shape[0])
++            gen0[rows] = np.clip(roi0[rows] + gain * (gen0[rows] - roi0[rows]), 0, 255)
++            res_frame = gen0.astype(np.uint8)
+         # 边缘羽化：模型重绘区与原始帧之间留一小段 alpha 渐变。
+         # 直接整块覆盖时，在胡须/头发这类高频纹理上会看到一条明显的"补丁边"，
+         # 观感就成了发虚的一块（马赛克感）；羽化后过渡自然很多。
+-- 
+2.53.0.windows.2
+
