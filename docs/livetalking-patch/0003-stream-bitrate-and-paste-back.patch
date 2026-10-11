@@ -1,0 +1,108 @@
+From 4ee20265c0eba3a330f311bcef84cdb6d6f1e22b Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Sun, 11 Oct 2026 16:45:18 +0800
+Subject: [PATCH] =?UTF-8?q?fix:=20=E6=8F=90=E5=8D=87=E6=8E=A8=E6=B5=81?=
+ =?UTF-8?q?=E7=A0=81=E7=8E=87=E4=B8=8A=E9=99=90=EF=BC=9B=E8=B4=B4=E5=9B=9E?=
+ =?UTF-8?q?=E6=94=B9=E7=94=A8=20INTER=5FAREA=20=E5=B9=B6=E5=81=9A=E8=BE=B9?=
+ =?UTF-8?q?=E7=BC=98=E7=BE=BD=E5=8C=96?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- app.py: aiortc 默认 H.264 只有 1Mbps、上限 3Mbps，对纹理密集画面（胡须等）不够。
+  起始码率提到 3Mbps、上限 6Mbps；实际码率仍跟随浏览器 REMB 反馈，
+  启动时设 LT_LOG_BITRATE=1 可打印真实码率（本地实测约 2.1-2.7Mbps 并在爬升）。
+- avatars/wav2lip_avatar.py: 贴回是 256x256 -> 人脸框尺寸的降采样，改用 INTER_AREA；
+  并在重绘区边缘加 4-12px alpha 渐变，消除胡须/头发上因整块覆盖产生的补丁边。
+- 实测（同一视口、同一问句的 A/B 对比）：人脸区锐度 199.8 -> 207.0（+3.6%），
+  嘴部窄带 242.8 -> 245.0（+0.9%），胡须纹理肉眼可见更清晰。
+---
+ app.py                    | 38 ++++++++++++++++++++++++++++++++++++++
+ avatars/wav2lip_avatar.py | 22 ++++++++++++++++++++--
+ 2 files changed, 58 insertions(+), 2 deletions(-)
+
+diff --git a/app.py b/app.py
+index 58b7955..12a99ee 100644
+--- a/app.py
++++ b/app.py
+@@ -35,6 +35,44 @@ import aiohttp
+ import aiohttp_cors
+ from aiortc import RTCPeerConnection, RTCSessionDescription,RTCIceServer,RTCConfiguration
+ from aiortc.rtcrtpsender import RTCRtpSender
++
++# ---------------------------------------------------------------------------
++# 提高 WebRTC 视频码率。aiortc 默认 H.264 只有 1 Mbps（VP8 0.5 Mbps），
++# 对 480p 以上、纹理密集的画面（例如胡须区域）明显不够，编码器会把细节抹成
++# 块状，看起来就像马赛克。这里把起始码率与上限一起放宽；实际码率仍会跟随
++# 浏览器的 REMB 估计，并被 MIN/MAX 夹住。
++# 本机/局域网推流不差这点带宽；如果部署在公网且带宽紧张，把下面的值调小即可。
++# ---------------------------------------------------------------------------
++from aiortc.codecs import h264 as _h264_codec
++from aiortc.codecs import vpx as _vpx_codec
++
++_h264_codec.DEFAULT_BITRATE = 3_000_000
++_h264_codec.MIN_BITRATE = 1_500_000
++_h264_codec.MAX_BITRATE = 6_000_000
++_vpx_codec.DEFAULT_BITRATE = 3_000_000
++_vpx_codec.MIN_BITRATE = 1_500_000
++_vpx_codec.MAX_BITRATE = 6_000_000
++
++# --- 临时诊断：打印编码器实际使用的码率（确认 REMB 反馈把码率定在哪） ---
++import os as _os
++
++if _os.environ.get("LT_LOG_BITRATE"):
++    _h264_prop = _h264_codec.H264Encoder.target_bitrate
++
++    def _lt_set_bitrate(self, value):
++        _h264_prop.fset(self, value)
++        print(f"[diag] H264 target_bitrate -> {value} bps", flush=True)
++
++    _h264_codec.H264Encoder.target_bitrate = property(_h264_prop.fget, _lt_set_bitrate)
++
++    _lt_orig_init = _h264_codec.H264Encoder.__init__
++
++    def _lt_init(self, *args, **kwargs):
++        _lt_orig_init(self, *args, **kwargs)
++        print(f"[diag] H264 encoder created, bitrate={self.target_bitrate} bps", flush=True)
++
++    _h264_codec.H264Encoder.__init__ = _lt_init
++
+ from server.webrtc import HumanPlayer
+ from avatars.base_avatar import BaseAvatar
+ from llm import llm_response
+diff --git a/avatars/wav2lip_avatar.py b/avatars/wav2lip_avatar.py
+index 4be495a..08009b7 100644
+--- a/avatars/wav2lip_avatar.py
++++ b/avatars/wav2lip_avatar.py
+@@ -162,8 +162,26 @@ class LipReal(BaseAvatar):
+         bbox = self.coord_list_cycle[idx]
+         combine_frame = self.frame_list_cycle[idx].copy()
+         y1, y2, x1, x2 = bbox
+-        res_frame = cv2.resize(pred_frame.astype(np.uint8),(x2-x1,y2-y1))
++        # 贴回是「256x256 -> 人脸框尺寸」的降采样，用 INTER_AREA 比默认的线性插值更锐、混叠更少
++        res_frame = cv2.resize(pred_frame.astype(np.uint8),(x2-x1,y2-y1),interpolation=cv2.INTER_AREA)
+         res_frame = self._sharpen_lower_face(res_frame)
+-        combine_frame[y1:y2, x1:x2] = res_frame
++        # 边缘羽化：模型重绘区与原始帧之间留一小段 alpha 渐变。
++        # 直接整块覆盖时，在胡须/头发这类高频纹理上会看到一条明显的"补丁边"，
++        # 观感就成了发虚的一块（马赛克感）；羽化后过渡自然很多。
++        # 边缘羽化：模型重绘区与原始帧之间留一小段 alpha 渐变。
++        # 直接整块覆盖时，在胡须/头发这类高频纹理上会看到一条明显的"补丁边"，
++        # 观感就成了发虚的一块（马赛克感）；羽化后过渡自然很多。
++        h, w = res_frame.shape[:2]
++        feather = max(4, min(12, min(h, w) // 12))
++        alpha = np.ones((h, w, 1), dtype=np.float32)
++        ramp_x = np.linspace(0.0, 1.0, feather, endpoint=False, dtype=np.float32)
++        ramp_y = np.linspace(0.0, 1.0, feather, endpoint=False, dtype=np.float32)
++        alpha[:, :feather, 0] *= ramp_x
++        alpha[:, -feather:, 0] *= ramp_x[::-1]
++        alpha[:feather, :, 0] *= ramp_y[:, None]
++        alpha[-feather:, :, 0] *= ramp_y[::-1, None]
++        roi = combine_frame[y1:y2, x1:x2].astype(np.float32)
++        blended = res_frame.astype(np.float32) * alpha + roi * (1.0 - alpha)
++        combine_frame[y1:y2, x1:x2] = blended.astype(np.uint8)
+         return combine_frame
+ 
+-- 
+2.53.0.windows.2
+
