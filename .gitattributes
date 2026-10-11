@@ -1,1 +1,8 @@
 *.glb filter=lfs diff=lfs merge=lfs -text
+
+# Windows 批处理 / PowerShell 脚本必须用 CRLF：
+# cmd.exe 在 LF-only 的 .bat 里会读错行（goto 找不到标签、(...) 块匹配失败），
+# 表现为双击后窗口一闪就退。这里锁定行尾，保证任何平台克隆下来都是 CRLF。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
