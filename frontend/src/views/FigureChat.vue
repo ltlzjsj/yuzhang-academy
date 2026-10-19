@@ -77,7 +77,7 @@ const LIVE_TALKING_AVATARS: Record<string, { avatar: string; idle?: string; zoom
     idle: JSON.stringify([{ audiotype: 1, imgpath: './data/custom/lvzuqian_idle' }]),
     zoom: 1.31,
   },
-  // 陆九渊原片为 4:3（480×640），头顶已贴近画面顶端，保持原样不放大
+  // 陆九渊 2026-10 换成 9:16 竖屏素材（480×854，102 帧），人脸占比与其他人接近，不放大
   luxiangshan: {
     avatar: 'luxiangshan_lt',
     idle: JSON.stringify([{ audiotype: 1, imgpath: './data/custom/luxiangshan_idle' }]),

@@ -1,0 +1,34 @@
+From f3ad548f3f4bae145b6bb7d7e4e1464cc84423a3 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Mon, 19 Oct 2026 22:39:31 +0800
+Subject: [PATCH] =?UTF-8?q?feat:=20=E9=99=86=E4=B9=9D=E6=B8=8A=E6=8D=A2?=
+ =?UTF-8?q?=E6=88=90=202026-10=20=E6=96=B0=E7=B4=A0=E6=9D=90=EF=BC=889:16?=
+ =?UTF-8?q?=EF=BC=89=EF=BC=8C=E5=B9=B6=E5=BC=80=E5=90=AF=E5=BC=A0=E5=98=B4?=
+ =?UTF-8?q?=E5=B9=85=E5=BA=A6=E5=A2=9E=E7=9B=8A?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 用新素材（说话 102 帧 / 待机 137 帧，720x1280）重生成 luxiangshan_lt 与 luxiangshan_idle
+- 新素材嘴部细节锐度 507，但张嘴幅度很小（动作量 2.06，旧版 3.69），
+  因此新增 MOUTH_GAIN: luxiangshan_lt = 1.35；PATCH_DETAIL 保持 0.55
+- 引擎侧验证：102 帧 full_imgs / face_imgs(256x256) / coords 完全对齐
+---
+ avatars/wav2lip_avatar.py | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/avatars/wav2lip_avatar.py b/avatars/wav2lip_avatar.py
+index 5a5fb64..a16355e 100644
+--- a/avatars/wav2lip_avatar.py
++++ b/avatars/wav2lip_avatar.py
+@@ -102,6 +102,7 @@ def load_avatar(avatar_id):
+ # ---------------------------------------------------------------------------
+ MOUTH_GAIN = {
+     "zhuxi_lt": 1.35,
++    "luxiangshan_lt": 1.35,   # 2026-10 新素材嘴部动作量 2.06（偏小），放大到接近罗从彦
+ }
+ 
+ # ---------------------------------------------------------------------------
+-- 
+2.53.0.windows.2
+
