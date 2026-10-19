@@ -1,0 +1,57 @@
+From 7aef951bdbed576780d9b7ff50c4c5a0431e8aab Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Mon, 19 Oct 2026 22:53:36 +0800
+Subject: [PATCH] =?UTF-8?q?feat:=20=E5=85=AD=E4=BA=BA=E7=BB=9F=E4=B8=80?=
+ =?UTF-8?q?=E5=8A=A0=E5=BC=BA=E8=A1=A5=E4=B8=81=E7=BB=86=E8=8A=82=EF=BC=88?=
+ =?UTF-8?q?w=3D1.0=EF=BC=89=EF=BC=8C=E5=B9=B6=E4=B8=BA=E6=B1=9F=E4=B8=87?=
+ =?UTF-8?q?=E9=87=8C=E6=96=B0=E7=B4=A0=E6=9D=90=E5=BC=80=E5=90=AF=E5=B9=85?=
+ =?UTF-8?q?=E5=BA=A6=E5=A2=9E=E7=9B=8A?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- PATCH_DETAIL 从 0.55/0.7 统一提到 1.0（含新增的罗从彦、王阳明）
+  仿真：模型输出约等于原图高斯模糊 1.8；w=0.55 只恢复约 28% 细节，
+  w=1.0 可恢复到 83~89% 且不过冲 -> 解决"嘴部还有一点模糊"
+- 江万里换成 2026-10 新素材（说话 139 帧 / 待机 107 帧，720x1280）
+  嘴部动作量 2.32（旧版 1.67）偏小，新增 MOUTH_GAIN: jiangwanli_lt = 1.25
+- 引擎侧验证：江万里 139 帧 full/face(256x256)/coords 完全对齐
+---
+ avatars/wav2lip_avatar.py | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/avatars/wav2lip_avatar.py b/avatars/wav2lip_avatar.py
+index c6de264..bdd7014 100644
+--- a/avatars/wav2lip_avatar.py
++++ b/avatars/wav2lip_avatar.py
+@@ -103,6 +103,7 @@ def load_avatar(avatar_id):
+ MOUTH_GAIN = {
+     "zhuxi_lt": 1.25,
+     "luxiangshan_lt": 1.25,   # 2026-10 新素材嘴部动作量 2.06（偏小），放大到接近罗从彦
++    "jiangwanli_lt": 1.25,    # 2026-10 新素材嘴部动作量 2.32（偏小），放大到接近罗从彦
+ }
+ 
+ # ---------------------------------------------------------------------------
+@@ -113,10 +114,15 @@ MOUTH_GAIN = {
+ # 默认 0（不干预）；按人物开启，先小后大调（0.5 ~ 0.9）。
+ # ---------------------------------------------------------------------------
+ PATCH_DETAIL = {
+-    "jiangwanli_lt": 0.55,
+-    "luxiangshan_lt": 0.55,
+-    "lvzuqian_lt": 0.55,
+-    "zhuxi_lt": 0.55,   # 2026-10 新素材嘴部细节更足（锐度约为罗从彦 1.8 倍），更需要补纹理
++    # 2026-10 仿真：模型重绘区约等于「原图高斯模糊 1.8」。
++    # w=0.55 只能恢复约 28% 的细节（仍显模糊），w=1.0 可恢复到 83~89% 且不过冲。
++    # 六个数字人统一用 1.0，保证贴回区的纹理接近原始帧。
++    "jiangwanli_lt": 1.0,
++    "luxiangshan_lt": 1.0,
++    "lvzuqian_lt": 1.0,
++    "zhuxi_lt": 1.0,
++    "luocongyan_lt": 1.0,
++    "wangyangming_lt": 1.0,
+ }
+ 
+ # 防纯黑保护：增益/细节注入都可能把嘴唇一带压到 0（观感就是"一小片变黑"）。
+-- 
+2.53.0.windows.2
+
