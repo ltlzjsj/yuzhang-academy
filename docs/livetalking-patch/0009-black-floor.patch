@@ -1,0 +1,65 @@
+From 904d141143320006d00602b791d09a9fb294ff0a Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Mon, 19 Oct 2026 22:44:58 +0800
+Subject: [PATCH] =?UTF-8?q?fix:=20=E5=BD=BB=E5=BA=95=E9=98=B2=E6=AD=A2?=
+ =?UTF-8?q?=E5=98=B4=E5=94=87=E5=81=B6=E5=8F=91=E7=BA=AF=E9=BB=91=E5=9D=97?=
+ =?UTF-8?q?=EF=BC=88=E6=96=B0=E5=A2=9E=20BLACK=5FFLOOR=20=E7=BB=9D?=
+ =?UTF-8?q?=E5=AF=B9=E4=B8=8B=E9=99=90=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+现象：说话时嘴唇偶尔会有一小片突然变黑。
+原因：wav2lip 偶发把嘴内/唇边压到 0；原来的 DARK_LIMIT 是"相对原帧"的限制，
+若该位置在原帧里本来就不亮（唇边阴影），它挡不住纯黑。
+
+- 新增 BLACK_FLOOR = 19：贴回结果不允许低于该亮度（仍是深色，但不再是死黑）
+- DARK_LIMIT 85 -> 60（限制贴回相对原帧的最大变暗幅度）
+- MOUTH_GAIN 1.35 -> 1.25（朱熹、陆九渊），减少把模型暗块放大的幅度
+
+仿真验证：构造一块纯黑坏帧（最暗 0），经过贴回保护后最暗变为 19。
+---
+ avatars/wav2lip_avatar.py | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/avatars/wav2lip_avatar.py b/avatars/wav2lip_avatar.py
+index a16355e..c6de264 100644
+--- a/avatars/wav2lip_avatar.py
++++ b/avatars/wav2lip_avatar.py
+@@ -101,8 +101,8 @@ def load_avatar(avatar_id):
+ # 只放大模型真正动过的地方，默认 1.0（不干预）。只列需要放大的人物，避免影响其他人。
+ # ---------------------------------------------------------------------------
+ MOUTH_GAIN = {
+-    "zhuxi_lt": 1.35,
+-    "luxiangshan_lt": 1.35,   # 2026-10 新素材嘴部动作量 2.06（偏小），放大到接近罗从彦
++    "zhuxi_lt": 1.25,
++    "luxiangshan_lt": 1.25,   # 2026-10 新素材嘴部动作量 2.06（偏小），放大到接近罗从彦
+ }
+ 
+ # ---------------------------------------------------------------------------
+@@ -122,7 +122,11 @@ PATCH_DETAIL = {
+ # 防纯黑保护：增益/细节注入都可能把嘴唇一带压到 0（观感就是"一小片变黑"）。
+ # 这里限制贴回结果相对**原帧**最多变暗 DARK_LIMIT 级：张开的嘴依然明显变暗，
+ # 但不会出现压死的纯黑块。0 = 关闭保护。
+-DARK_LIMIT = 85
++DARK_LIMIT = 60
++
++# 绝对下限：贴回结果不允许低于该亮度，专门对付模型偶发输出的「纯黑块」。
++# 19 在画面上仍是深色（嘴内该有的暗），但不会再是死黑一片。0 = 关闭。
++BLACK_FLOOR = 19
+ 
+ @torch.no_grad()
+ def warm_up(batch_size,model,modelres):
+@@ -217,6 +221,9 @@ class LipReal(BaseAvatar):
+             res_frame = np.maximum(
+                 res_frame.astype(np.float32), np.maximum(roi_floor - DARK_LIMIT, 0.0)
+             ).astype(np.uint8)
++        # 绝对下限：彻底避免「纯黑块」（模型偶尔会把唇边/嘴内压到 0）
++        if BLACK_FLOOR > 0:
++            res_frame = np.maximum(res_frame, BLACK_FLOOR).astype(np.uint8)
+         # 边缘羽化：模型重绘区与原始帧之间留一小段 alpha 渐变。
+         # 直接整块覆盖时，在胡须/头发这类高频纹理上会看到一条明显的"补丁边"，
+         # 观感就成了发虚的一块（马赛克感）；羽化后过渡自然很多。
+-- 
+2.53.0.windows.2
+
